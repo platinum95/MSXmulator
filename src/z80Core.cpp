@@ -428,10 +428,15 @@ static inline bool FlagClear() {
 
 }
 
+/***********************************
+*  Operations
+**********************************/
 namespace Operations {
-static inline void NOP() {
-}
 
+/**********************************
+ *  Load & Exchange
+ *********************************/
+#pragma region LoadAndExchange
 template<IsByteOrWord T>
 static inline T LD( T O1 ) {
     return O1;
@@ -443,6 +448,156 @@ static inline uint16_t LD16( uint16_t O1 ) {
     return LD<uint16_t>( O1 );
 }
 
+template<uint16_t &reg1, uint16_t &reg2>
+static inline void OperationLD() {
+    OperationBase<LD16, AddressingModes::RegisterWrite<reg1>, AddressingModes::RegisterRead<reg2>>();
+}
+template<uint16_t &reg, auto ReadMode>
+static inline void OperationLD() {
+    OperationBase<LD16, AddressingModes::RegisterWrite<reg>, ReadMode>();
+}
+template<auto WriteMode, uint16_t &reg>
+static inline void OperationLD() {
+    OperationBase<LD16, WriteMode, AddressingModes::RegisterRead<reg>>();
+}
+template<auto WriteMode, auto ReadMode>
+    requires std::is_same< std::invoke_result_t<decltype(ReadMode)>, uint8_t>::value
+static inline void OperationLD() {
+    OperationBase<LD8, WriteMode, ReadMode>();
+}
+template<auto WriteMode, auto ReadMode>
+    requires std::is_same< std::invoke_result_t<decltype(ReadMode)>, uint16_t>::value
+static inline void OperationLD() {
+    OperationBase<LD16, WriteMode, ReadMode>();
+}
+
+static inline uint8_t POP8() {
+    return MemoryAccess::Read<uint8_t>( SP-- );
+}
+static inline uint16_t POP16() {
+    uint16_t value = POP8();
+    return value | static_cast<uint16_t>( POP8() ) << 8;
+}
+template<RegisterSet &registerSet>
+static inline void OperationPop() {
+    OperationBase<POP16, AddressingModes::RegisterWrite<registerSet>>();
+}
+
+static inline void PUSH8( uint8_t data ) {
+    MemoryAccess::Write( ++SP, data );
+}
+static inline void PUSH16( uint16_t data ) {
+    PUSH8( static_cast<uint8_t>( ( data >> 8 ) & 0x00FF ) );
+    PUSH8( static_cast<uint8_t>( data & 0x00FF ) );
+}
+template<RegisterSet &registerSet>
+static inline void OperationPush() {
+    OperationBase<PUSH16, AddressingModes::RegisterRead<registerSet>>();
+}
+
+template<RegisterSet &registerSet>
+static inline void EX() {
+    // TODO
+    registerSet.alternateRegister.word = std::exchange( registerSet.mainRegister.word, registerSet.alternateRegister.word );
+}
+template<RegisterSet &registerSet1, RegisterSet &registerSet2>
+static inline void EX() {
+    // TODO
+    registerSet1.mainRegister.word = std::exchange( registerSet2.mainRegister.word, registerSet1.mainRegister.word );
+}
+template<RegisterSet &registerSet>
+static inline uint16_t EX_mem( uint16_t memoryData ) {
+    // TODO
+    // Return value is written to memory
+    uint16_t toReturn = AddressingModes::RegisterRead<registerSet>();
+    AddressingModes::RegisterWrite<registerSet>( memoryData );
+    return toReturn;
+}
+template<uint16_t &reg>
+static inline uint16_t EX_mem( uint16_t memoryData ) {
+    // TODO
+    // Return value is written to memory
+    uint16_t toReturn = AddressingModes::RegisterRead<reg>();
+    AddressingModes::RegisterWrite<reg>( memoryData );
+    return toReturn;
+}
+template<auto WriteMode, auto ReadMode, uint16_t &reg>
+static inline void OperationEX() {
+    OperationBase<EX_mem<reg>, WriteMode, ReadMode>();
+}
+static inline void EXX() {
+    // Implied register access
+    // TODO
+    EX<BC>();
+    EX<DE>();
+    EX<HL>();
+}
+
+template<uint16_t &reg>
+static inline void OperationPOP() {
+    OperationBase<POP16, AddressingModes::RegisterWrite<reg>>();
+}
+
+template<uint16_t &reg>
+static inline void OperationPUSH() {
+    OperationBase<PUSH16, AddressingModes::RegisterRead<reg>>();
+}
+#pragma endregion
+
+/**********************************
+ *  Block Transfer & Search
+ *********************************/
+#pragma region BlockTransferAndSearch
+template<bool increment, bool repeat>
+static inline uint8_t LDN( uint8_t O1 ) {
+    // TODO
+    --BC.mainRegister.word;
+    if constexpr ( increment ) {
+        ++DE.mainRegister.word;
+        ++HL.mainRegister.word;
+    }
+    else {
+        --DE.mainRegister.word;
+        --HL.mainRegister.word;
+    }
+    if constexpr( repeat ) {
+        if ( BC.mainRegister.word != 0 ) {
+            // TODO - reset PC
+        }
+    }
+    return O1;
+}
+template<bool increment, bool repeat>
+static inline void OperationLDN() {
+    OperationBase<LDN<increment, repeat>, AddressingModes::AddressWrite<DE, uint8_t>, AddressingModes::AddressRead<HL, uint8_t>>();
+}
+
+template<bool increment, bool repeat>
+static inline void CPN( uint8_t O1 ) {
+    // TODO
+    (void) O1;
+    --BC.mainRegister.word;
+    if constexpr ( increment ) {
+        ++HL.mainRegister.word;
+    }
+    else {
+        --HL.mainRegister.word;
+    }
+    if constexpr( repeat ) {
+        if ( BC.mainRegister.word != 0 ) {
+            // TODO - reset PC
+        }
+    }
+}
+template<bool increment, bool repeat>
+static inline void OperationCPN() {
+    OperationBase<CPN<increment, repeat>, AddressingModes::AddressRead<HL, uint8_t>>();
+}
+#pragma endregion
+/**********************************
+ *  Arithmetic & Logic
+ *********************************/
+#pragma region ArithmeticAndLogic
 template<IsByteOrWord T>
 static inline T INC( T O1 ) {
     return O1 + 1;
@@ -547,6 +702,67 @@ static inline uint16_t AND16( uint16_t O1, uint16_t O2 ) {
     return AND<uint16_t>( O1, O2 );
 }
 
+template<uint16_t &reg>
+static inline void OperationINC() {
+    OperationBase<INC16, AddressingModes::RegisterWrite<reg>, AddressingModes::RegisterRead<reg>>();
+}
+template<auto WriteMode, auto ReadMode>
+static inline void OperationINC() {
+    OperationBase<INC8, WriteMode, ReadMode>();
+}
+template<uint16_t &reg>
+static inline void OperationDEC() {
+    OperationBase<DEC16, AddressingModes::RegisterWrite<reg>, AddressingModes::RegisterRead<reg>>();
+}
+template<auto WriteMode, auto ReadMode>
+static inline void OperationDEC() {
+    OperationBase<DEC8, WriteMode, ReadMode>();
+}
+
+
+template<uint16_t &reg, RegisterSet &registerSet>
+static inline void OperationADD() {
+    OperationBase<ADD16, AddressingModes::RegisterWrite<reg>, AddressingModes::RegisterRead<reg>, AddressingModes::RegisterRead<registerSet>>();
+}
+template<uint16_t &reg1, uint16_t &reg2>
+static inline void OperationADD() {
+    OperationBase<ADD16, AddressingModes::RegisterWrite<reg1>, AddressingModes::RegisterRead<reg1>, AddressingModes::RegisterRead<reg2>>();
+}
+template<auto ReadMode>
+static inline void OperationADD() {
+    OperationBase<ADD8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+}
+
+template<auto ReadMode>
+static inline void OperationADC() {
+    OperationBase<ADC8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+}
+
+template<auto ReadMode>
+static inline void OperationSUB() {
+    OperationBase<SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+}
+
+template<auto ReadMode>
+static inline void OperationSBC() {
+    OperationBase<SBC8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+}
+
+template<auto ReadMode>
+static inline void OperationAND() {
+    OperationBase<AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+}
+
+template<auto ReadMode>
+static inline void OperationXOR() {
+    OperationBase<XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+}
+
+template<auto ReadMode>
+static inline void OperationOR() {
+    OperationBase<OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+}
+
 template<IsByteOrWord T>
 static inline void CP( T O1, T O2 ) {
     // TODO
@@ -559,96 +775,44 @@ static inline void CP8( uint8_t O1, uint8_t O2 ) {
 static inline void CP16( uint16_t O1, uint16_t O2 ) {
     CP<uint16_t>( O1, O2 );
 }
+template<auto ReadMode>
+static inline void OperationCP() {
+    OperationBase<CP8, AddressingModes::RegisterRead<A, true>, ReadMode>();
+}
 
-template<RegisterSet &registerSet>
-static inline void EX() {
+static inline uint8_t DAA( uint8_t O1 ) {
     // TODO
-    registerSet.alternateRegister.word = std::exchange( registerSet.mainRegister.word, registerSet.alternateRegister.word );
+    (void) O1;
+    return O1;
 }
 
-template<RegisterSet &registerSet1, RegisterSet &registerSet2>
-static inline void EX() {
+static inline void CPL() {
     // TODO
-    registerSet1.mainRegister.word = std::exchange( registerSet2.mainRegister.word, registerSet1.mainRegister.word );
 }
 
-static inline uint16_t DJNZ( int8_t O1 ) {
+static inline uint8_t NEG( uint8_t O1 ) {
+    return ( ~O1 ) + 1;
+}
+static inline void OperationNEG() {
+    OperationBase<NEG, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>>();
+}
+
+static inline uint8_t CCF( uint8_t O1 ) {
     // TODO
-    return PC + O1;
+    return O1 ^ ( 1u << static_cast<uint8_t>( Flags::Carry ) );
 }
 
-template <uint8_t BitPos>
-static inline void BIT( uint8_t O1 ) {
-    bool bitVal = O1 & ( 1u << BitPos );
-    (void) bitVal;
-}
-template<uint8_t BitPos, RegisterSet &registerSet, bool lowByte>
-static inline void OperationBIT() {
-    OperationBase<BIT<BitPos>, AddressingModes::RegisterRead<registerSet, lowByte>>();
-}
-template<uint8_t BitPos, RegisterSet &registerSet>
-static inline void OperationBIT() {
-    OperationBase<BIT<BitPos>, AddressingModes::AddressRead<registerSet, uint8_t>>();
-}
-template<uint8_t BitPos, auto ReadMode>
-static inline void OperationBIT() {
-    OperationBase<BIT<BitPos>, ReadMode>();
+static inline uint8_t SCF( uint8_t O1 ) {
+    // TODO
+    (void) O1;
+    return O1 | ( 1 << static_cast<uint8_t>( Flags::Carry ) );
 }
 
-template <uint8_t BitPos>
-static inline uint8_t RES( uint8_t O1 ) {
-    return O1 & ~( 1u << BitPos );
-}
-template <uint8_t BitPos, auto ExtraRegisterWriteMode>
-static inline uint8_t RES1( uint8_t O1 ) {
-    uint8_t result = O1 & ~( 1u << BitPos );
-    ExtraRegisterWriteMode( result );
-    return result;
-}
-template<uint8_t BitPos, RegisterSet &registerSet, bool lowByte>
-static inline void OperationRES() {
-    OperationBase<RES<BitPos>, AddressingModes::RegisterWrite<registerSet, lowByte>, AddressingModes::RegisterRead<registerSet, lowByte>>();
-}
-template<uint8_t BitPos, RegisterSet &registerSet>
-static inline void OperationRES() {
-    OperationBase<RES<BitPos>, AddressingModes::AddressWrite<registerSet, uint8_t>, AddressingModes::AddressRead<registerSet, uint8_t>>();
-}
-template<uint8_t BitPos, auto WriteMode, auto ReadMode>
-static inline void OperationRES() {
-    OperationBase<RES<BitPos>, WriteMode, ReadMode>();
-}
-template<uint8_t BitPos, auto ExtraRegisterWriteMode, auto WriteMode, auto ReadMode>
-static inline void OperationRES() {
-    OperationBase<RES1<BitPos, ExtraRegisterWriteMode>, WriteMode, ReadMode>();
-}
-
-template <uint8_t BitPos>
-static inline uint8_t SET( uint8_t O1 ) {
-    return O1 | ( 1u << BitPos );
-}
-template <uint8_t BitPos, auto ExtraRegisterWriteMode>
-static inline uint8_t SET1( uint8_t O1 ) {
-    uint8_t result = O1 | ( 1u << BitPos );
-    ExtraRegisterWriteMode( result );
-    return result;
-}
-template<uint8_t BitPos, RegisterSet &registerSet, bool lowByte>
-static inline void OperationSET() {
-    OperationBase<SET<BitPos>, AddressingModes::RegisterWrite<registerSet, lowByte>, AddressingModes::RegisterRead<registerSet, lowByte>>();
-}
-template<uint8_t BitPos, RegisterSet &registerSet>
-static inline void OperationSET() {
-    OperationBase<SET<BitPos>, AddressingModes::AddressWrite<registerSet, uint8_t>, AddressingModes::AddressRead<registerSet, uint8_t>>();
-}
-template<uint8_t BitPos, auto WriteMode, auto ReadMode>
-static inline void OperationSET() {
-    OperationBase<SET<BitPos>, WriteMode, ReadMode>();
-}
-template<uint8_t BitPos, auto ExtraRegisterWriteMode, auto WriteMode, auto ReadMode>
-static inline void OperationSET() {
-    OperationBase<SET1<BitPos, ExtraRegisterWriteMode>, WriteMode, ReadMode>();
-}
-
+#pragma endregion
+/**********************************
+ *  Rotate & Shift
+ *********************************/
+#pragma region RotateAndShift
 static inline uint8_t RLCA( uint8_t O1 ) {
     // TODO
     return O1 << 1;
@@ -892,7 +1056,102 @@ static inline void OperationSRL() {
     OperationBase<SRL, AddressingModes::AddressWrite<registerSet, uint8_t>, AddressingModes::AddressRead<registerSet, uint8_t>>();
 }
 
+static inline uint8_t RLD( uint8_t O1 ) {
+    // TODO
+    (void) O1;
+    return 0;
+}
 
+static inline uint8_t RRD( uint8_t O1 ) {
+    // TODO
+    (void) O1;
+    return 0;
+}
+
+
+#pragma endregion
+/**********************************
+ *  Bit Manipulation
+ *********************************/
+#pragma region BitManipulation
+template <uint8_t BitPos>
+static inline void BIT( uint8_t O1 ) {
+    bool bitVal = O1 & ( 1u << BitPos );
+    (void) bitVal;
+}
+template<uint8_t BitPos, RegisterSet &registerSet, bool lowByte>
+static inline void OperationBIT() {
+    OperationBase<BIT<BitPos>, AddressingModes::RegisterRead<registerSet, lowByte>>();
+}
+template<uint8_t BitPos, RegisterSet &registerSet>
+static inline void OperationBIT() {
+    OperationBase<BIT<BitPos>, AddressingModes::AddressRead<registerSet, uint8_t>>();
+}
+template<uint8_t BitPos, auto ReadMode>
+static inline void OperationBIT() {
+    OperationBase<BIT<BitPos>, ReadMode>();
+}
+
+template <uint8_t BitPos>
+static inline uint8_t RES( uint8_t O1 ) {
+    return O1 & ~( 1u << BitPos );
+}
+template <uint8_t BitPos, auto ExtraRegisterWriteMode>
+static inline uint8_t RES1( uint8_t O1 ) {
+    uint8_t result = O1 & ~( 1u << BitPos );
+    ExtraRegisterWriteMode( result );
+    return result;
+}
+template<uint8_t BitPos, RegisterSet &registerSet, bool lowByte>
+static inline void OperationRES() {
+    OperationBase<RES<BitPos>, AddressingModes::RegisterWrite<registerSet, lowByte>, AddressingModes::RegisterRead<registerSet, lowByte>>();
+}
+template<uint8_t BitPos, RegisterSet &registerSet>
+static inline void OperationRES() {
+    OperationBase<RES<BitPos>, AddressingModes::AddressWrite<registerSet, uint8_t>, AddressingModes::AddressRead<registerSet, uint8_t>>();
+}
+template<uint8_t BitPos, auto WriteMode, auto ReadMode>
+static inline void OperationRES() {
+    OperationBase<RES<BitPos>, WriteMode, ReadMode>();
+}
+template<uint8_t BitPos, auto ExtraRegisterWriteMode, auto WriteMode, auto ReadMode>
+static inline void OperationRES() {
+    OperationBase<RES1<BitPos, ExtraRegisterWriteMode>, WriteMode, ReadMode>();
+}
+
+template <uint8_t BitPos>
+static inline uint8_t SET( uint8_t O1 ) {
+    return O1 | ( 1u << BitPos );
+}
+template <uint8_t BitPos, auto ExtraRegisterWriteMode>
+static inline uint8_t SET1( uint8_t O1 ) {
+    uint8_t result = O1 | ( 1u << BitPos );
+    ExtraRegisterWriteMode( result );
+    return result;
+}
+template<uint8_t BitPos, RegisterSet &registerSet, bool lowByte>
+static inline void OperationSET() {
+    OperationBase<SET<BitPos>, AddressingModes::RegisterWrite<registerSet, lowByte>, AddressingModes::RegisterRead<registerSet, lowByte>>();
+}
+template<uint8_t BitPos, RegisterSet &registerSet>
+static inline void OperationSET() {
+    OperationBase<SET<BitPos>, AddressingModes::AddressWrite<registerSet, uint8_t>, AddressingModes::AddressRead<registerSet, uint8_t>>();
+}
+template<uint8_t BitPos, auto WriteMode, auto ReadMode>
+static inline void OperationSET() {
+    OperationBase<SET<BitPos>, WriteMode, ReadMode>();
+}
+template<uint8_t BitPos, auto ExtraRegisterWriteMode, auto WriteMode, auto ReadMode>
+static inline void OperationSET() {
+    OperationBase<SET1<BitPos, ExtraRegisterWriteMode>, WriteMode, ReadMode>();
+}
+
+#pragma endregion
+
+/**********************************
+ *  Jump, Call, & Return
+ *********************************/
+#pragma region JumpCallAndReturn
 static inline uint16_t JR( int8_t O1, bool condition ) {
     // TODO
     if ( condition ) {
@@ -915,56 +1174,6 @@ static inline uint16_t RET( bool condition ) {
 
 static inline uint16_t RET1() {
     return RET( true );
-}
-
-static inline uint8_t DAA( uint8_t O1 ) {
-    // TODO
-    (void) O1;
-    return O1;
-}
-
-static inline uint8_t SCF( uint8_t O1 ) {
-    // TODO
-    (void) O1;
-    return O1 | ( 1 << static_cast<uint8_t>( Flags::Carry ) );
-}
-
-static inline uint8_t CCF( uint8_t O1 ) {
-    // TODO
-    return O1 ^ ( 1u << static_cast<uint8_t>( Flags::Carry ) );
-}
-
-static inline void HALT() {
-    // TODO
-}
-
-
-static inline uint8_t POP8() {
-    return MemoryAccess::Read<uint8_t>( SP-- );
-}
-
-static inline uint16_t POP16() {
-    uint16_t value = POP8();
-    return value | static_cast<uint16_t>( POP8() ) << 8;
-}
-
-template<RegisterSet &registerSet>
-static inline void OperationPop() {
-    OperationBase<POP16, AddressingModes::RegisterWrite<registerSet>>();
-}
-
-static inline void PUSH8( uint8_t data ) {
-    MemoryAccess::Write( ++SP, data );
-}
-
-static inline void PUSH16( uint16_t data ) {
-    PUSH8( static_cast<uint8_t>( ( data >> 8 ) & 0x00FF ) );
-    PUSH8( static_cast<uint8_t>( data & 0x00FF ) );
-}
-
-template<RegisterSet &registerSet>
-static inline void OperationPush() {
-    OperationBase<PUSH16, AddressingModes::RegisterRead<registerSet>>();
 }
 
 static inline uint16_t JP( uint16_t O1, bool condition ) {
@@ -1011,36 +1220,23 @@ static inline void OperationCall() {
     OperationBase<CALL1, AddressingModes::RegisterWrite<PC>, AddressingModes::ImmediateExtended<0>>();
 }
 
-static inline void EXX() {
-    // Implied register access
+static inline void OperationRETN() {
     // TODO
-    EX<BC>();
-    EX<DE>();
-    EX<HL>();
 }
 
-template<RegisterSet &registerSet>
-static inline uint16_t EX_mem( uint16_t memoryData ) {
+static inline void RETI( ) {
     // TODO
-    // Return value is written to memory
-    uint16_t toReturn = AddressingModes::RegisterRead<registerSet>();
-    AddressingModes::RegisterWrite<registerSet>( memoryData );
-    return toReturn;
 }
-
 template<uint16_t &reg>
-static inline uint16_t EX_mem( uint16_t memoryData ) {
-    // TODO
-    // Return value is written to memory
-    uint16_t toReturn = AddressingModes::RegisterRead<reg>();
-    AddressingModes::RegisterWrite<reg>( memoryData );
-    return toReturn;
+static inline void OperationJP() {
+    OperationBase<JP1, AddressingModes::RegisterWrite<PC>, AddressingModes::RegisterRead<reg>>();
 }
 
-template<auto WriteMode, auto ReadMode, uint16_t &reg>
-static inline void OperationEX() {
-    OperationBase<EX_mem<reg>, WriteMode, ReadMode>();
+static inline uint16_t DJNZ( int8_t O1 ) {
+    // TODO
+    return PC + O1;
 }
+
 
 template<uint16_t resetVector>
 static inline uint16_t RST() {
@@ -1053,6 +1249,12 @@ static inline void OperationRst() {
     OperationBase<RST<resetVector>, AddressingModes::RegisterWrite<PC>>();
 }
 
+#pragma endregion
+
+/**********************************
+ *  Input/Output
+ *********************************/
+#pragma region InputOutput
 static inline uint8_t IN( uint8_t data ) {
     // TODO
     (void) data;
@@ -1073,85 +1275,6 @@ static inline void IN1( uint8_t data ) {
 static inline uint8_t OUT1() {
     // TODO
     return 0;
-}
-
-template<bool enable>
-static inline void EI_DI() {
-    if constexpr( enable ) {
-        // TODO - enable interrupts
-    }
-    else {
-        // TODO - disable interrupts
-    }
-}
-
-static inline uint8_t NEG( uint8_t O1 ) {
-    return ( ~O1 ) + 1;
-}
-
-static inline void OperationNEG() {
-    OperationBase<NEG, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>>();
-}
-
-template<uint8_t IMValue>
-static inline void IM() {
-    // TODO
-}
-
-template<uint8_t IMValue>
-static inline void OperationIM() {
-    OperationBase<IM<IMValue>>();
-}
-
-static inline void OperationRETN() {
-    // TODO
-}
-
-template<bool increment, bool repeat>
-static inline uint8_t LDN8( uint8_t O1 ) {
-    // TODO
-    --BC.mainRegister.word;
-    if constexpr ( increment ) {
-        ++DE.mainRegister.word;
-        ++HL.mainRegister.word;
-    }
-    else {
-        --DE.mainRegister.word;
-        --HL.mainRegister.word;
-    }
-    if constexpr( repeat ) {
-        if ( BC.mainRegister.word != 0 ) {
-            // TODO - reset PC
-        }
-    }
-    return O1;
-}
-template<bool increment, bool repeat>
-static inline void OperationLDN8() {
-    OperationBase<LDN8<increment, repeat>, AddressingModes::AddressWrite<DE, uint8_t>, AddressingModes::AddressRead<HL, uint8_t>>();
-}
-
-
-template<bool increment, bool repeat>
-static inline void CPN8( uint8_t O1 ) {
-    // TODO
-    (void) O1;
-    --BC.mainRegister.word;
-    if constexpr ( increment ) {
-        ++HL.mainRegister.word;
-    }
-    else {
-        --HL.mainRegister.word;
-    }
-    if constexpr( repeat ) {
-        if ( BC.mainRegister.word != 0 ) {
-            // TODO - reset PC
-        }
-    }
-}
-template<bool increment, bool repeat>
-static inline void OperationCPN8() {
-    OperationBase<CPN8<increment, repeat>, AddressingModes::AddressRead<HL, uint8_t>>();
 }
 
 template<bool increment, bool repeat>
@@ -1182,124 +1305,39 @@ static inline void OperationOUTN8() {
     OperationBase<INNOUTN8<increment, repeat>, AddressingModes::PortWrite<BC, uint8_t>, AddressingModes::AddressRead<HL, uint8_t>>();
 }
 
-static inline uint8_t RLD( uint8_t O1 ) {
-    // TODO
-    (void) O1;
-    return 0;
+#pragma endregion
+
+/**********************************
+ *  CPU Control Group
+ *********************************/
+#pragma region CPUControlGroup
+static inline void NOP() {
 }
 
-static inline uint8_t RRD( uint8_t O1 ) {
-    // TODO
-    (void) O1;
-    return 0;
-}
-
-static inline void RETI( ) {
+static inline void HALT() {
     // TODO
 }
 
-template<uint16_t &reg, RegisterSet &registerSet>
-static inline void OperationADD() {
-    OperationBase<ADD16, AddressingModes::RegisterWrite<reg>, AddressingModes::RegisterRead<reg>, AddressingModes::RegisterRead<registerSet>>();
-}
-template<uint16_t &reg1, uint16_t &reg2>
-static inline void OperationADD() {
-    OperationBase<ADD16, AddressingModes::RegisterWrite<reg1>, AddressingModes::RegisterRead<reg1>, AddressingModes::RegisterRead<reg2>>();
-}
-template<auto ReadMode>
-static inline void OperationADD() {
-    OperationBase<ADD8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+template<bool enable>
+static inline void EI_DI() {
+    if constexpr( enable ) {
+        // TODO - enable interrupts
+    }
+    else {
+        // TODO - disable interrupts
+    }
 }
 
-template<auto ReadMode>
-static inline void OperationADC() {
-    OperationBase<ADC8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+template<uint8_t IMValue>
+static inline void IM() {
+    // TODO
+}
+template<uint8_t IMValue>
+static inline void OperationIM() {
+    OperationBase<IM<IMValue>>();
 }
 
-template<auto ReadMode>
-static inline void OperationSUB() {
-    OperationBase<SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
-}
-
-template<auto ReadMode>
-static inline void OperationSBC() {
-    OperationBase<SBC8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
-}
-
-template<auto ReadMode>
-static inline void OperationAND() {
-    OperationBase<AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
-}
-
-template<auto ReadMode>
-static inline void OperationXOR() {
-    OperationBase<XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
-}
-
-template<auto ReadMode>
-static inline void OperationOR() {
-    OperationBase<OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
-}
-
-template<uint16_t &reg1, uint16_t &reg2>
-static inline void OperationLD() {
-    OperationBase<LD16, AddressingModes::RegisterWrite<reg1>, AddressingModes::RegisterRead<reg2>>();
-}
-template<uint16_t &reg, auto ReadMode>
-static inline void OperationLD() {
-    OperationBase<LD16, AddressingModes::RegisterWrite<reg>, ReadMode>();
-}
-template<auto WriteMode, uint16_t &reg>
-static inline void OperationLD() {
-    OperationBase<LD16, WriteMode, AddressingModes::RegisterRead<reg>>();
-}
-template<auto WriteMode, auto ReadMode>
-    requires std::is_same< std::invoke_result_t<decltype(ReadMode)>, uint8_t>::value
-static inline void OperationLD() {
-    OperationBase<LD8, WriteMode, ReadMode>();
-}
-template<auto WriteMode, auto ReadMode>
-    requires std::is_same< std::invoke_result_t<decltype(ReadMode)>, uint16_t>::value
-static inline void OperationLD() {
-    OperationBase<LD16, WriteMode, ReadMode>();
-}
-
-template<auto ReadMode>
-static inline void OperationCP() {
-    OperationBase<CP8, AddressingModes::RegisterRead<A, true>, ReadMode>();
-}
-
-template<uint16_t &reg>
-static inline void OperationINC() {
-    OperationBase<INC16, AddressingModes::RegisterWrite<reg>, AddressingModes::RegisterRead<reg>>();
-}
-template<auto WriteMode, auto ReadMode>
-static inline void OperationINC() {
-    OperationBase<INC8, WriteMode, ReadMode>();
-}
-template<uint16_t &reg>
-static inline void OperationDEC() {
-    OperationBase<DEC16, AddressingModes::RegisterWrite<reg>, AddressingModes::RegisterRead<reg>>();
-}
-template<auto WriteMode, auto ReadMode>
-static inline void OperationDEC() {
-    OperationBase<DEC8, WriteMode, ReadMode>();
-}
-
-template<uint16_t &reg>
-static inline void OperationPOP() {
-    OperationBase<POP16, AddressingModes::RegisterWrite<reg>>();
-}
-
-template<uint16_t &reg>
-static inline void OperationPUSH() {
-    OperationBase<PUSH16, AddressingModes::RegisterRead<reg>>();
-}
-
-template<uint16_t &reg>
-static inline void OperationJP() {
-    OperationBase<JP1, AddressingModes::RegisterWrite<PC>, AddressingModes::RegisterRead<reg>>();
-}
+#pragma endregion
 
 }
 
@@ -4629,12 +4667,12 @@ static inline void extendedOpEXTD() {
         }
         case 0xA0:{
             // TODO - LDI
-            Operations::OperationLDN8<true, false>();
+            Operations::OperationLDN<true, false>();
             break;
         }
         case 0xA1:{
             // TODO - CPI
-            Operations::OperationCPN8<true, false>();
+            Operations::OperationCPN<true, false>();
             break;
         }
         case 0xA2:{
@@ -4649,12 +4687,12 @@ static inline void extendedOpEXTD() {
         }
         case 0xA8:{
             // TODO - LDD
-            Operations::OperationLDN8<false, false>();
+            Operations::OperationLDN<false, false>();
             break;
         }
         case 0xA9:{
             // TODO - CPD
-            Operations::OperationCPN8<false, false>();
+            Operations::OperationCPN<false, false>();
             break;
         }
         case 0xAA:{
@@ -4669,12 +4707,12 @@ static inline void extendedOpEXTD() {
         }
         case 0xB0:{
             // TODO - LDIR
-            Operations::OperationLDN8<true, true>();
+            Operations::OperationLDN<true, true>();
             break;
         }
         case 0xB1:{
             // TODO - CPIR
-            Operations::OperationCPN8<true, true>();
+            Operations::OperationCPN<true, true>();
             break;
         }
         case 0xB2:{
@@ -4689,12 +4727,12 @@ static inline void extendedOpEXTD() {
         }
         case 0xB8:{
             // TODO - LDDR
-            Operations::OperationLDN8<false, true>();
+            Operations::OperationLDN<false, true>();
             break;
         }
         case 0xB9:{
             // TODO - CPDR
-            Operations::OperationCPN8<false, true>();
+            Operations::OperationCPN<false, true>();
             break;
         }
         case 0xBA:{
@@ -6675,7 +6713,7 @@ static inline void operationTick() {
         }
         case 0x2F:{
             //TODO - 2F,CPL,4,1,1
-            OperationBase<Operations::LD8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>>();
+            OperationBase<Operations::CPL>();
             break;
         }
         case 0x30:{
