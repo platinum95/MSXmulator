@@ -1,9 +1,9 @@
+#include <bit>
 #include <functional>
 #include <iostream>
 #include <stdint.h>
 
-/* Template bases */
-
+#pragma region Concepts
 template<typename T>
 concept IsByteOrWord = std::is_same<T, uint8_t>::value || std::is_same<T, uint16_t>::value || std::is_same<T, bool>::value || std::is_same<T, int8_t>::value;
 
@@ -59,8 +59,9 @@ concept IsSingleParamWriteoutOp = IsInvocableOperationSingleParamWithRet<decltyp
 
 template<auto operation, auto read1, auto read2, auto write>
 concept IsDualParamWriteoutOp = IsInvocableOperationDualParamWithRet<decltype(operation), decltype(read1), decltype(read2), decltype(write)>;
+#pragma endregion
 
-
+#pragma region OperationBases
 template <auto operation>
     requires IsInvocableOperationNoParamNoRet<decltype(operation)>
 void OperationBase() {
@@ -108,13 +109,9 @@ void OperationBase() {
     write( operation( readO1(), readO2() ) );
     std::cout << "Dual param, with ret\n";
 }
+#pragma endregion
 
-static inline void operationTick();
-
-void z80Tick() {
-    operationTick();
-}
-
+#pragma region Registers
 enum class Flags {
     Carry = 0,
     AddSub = 1,
@@ -124,20 +121,13 @@ enum class Flags {
     Sign = 7
 };
 
+
 static uint16_t PC;
 static uint16_t SP;
 static uint16_t IX;
 static uint16_t IY;
 static uint16_t I;
 static uint16_t R;
-
-struct RegisterPair2 {
-    uint8_t r1;
-    uint8_t r2;
-
-    uint16_t GetWord() const { /* TODO */ return 0; }
-    void StoreWord() {/* TODO */ }
-};
 
 union RegisterPair {
     struct ByteRegisters {
@@ -152,15 +142,46 @@ struct RegisterSet {
     RegisterPair alternateRegister;
 };
 
-struct RegisterSet2 {
-    RegisterPair mainRegister;
-    RegisterPair alternateRegister;
-};
-
 static RegisterSet A;
 static RegisterSet BC;
 static RegisterSet DE;
 static RegisterSet HL;
+
+static uint16_t nextPC;
+static uint16_t currentOpDataOffset;
+
+static bool IFF1, IFF2;
+static uint8_t InterruptMode;
+
+template <Flags flag>
+struct FlagControl {
+    inline void operator=( bool rhs ) {
+        constexpr uint8_t mask = 1u << static_cast<uint8_t>( flag );
+        if ( rhs ) {
+            A.mainRegister.byteRegisters.r2 |= mask;
+        }
+        else {
+            A.mainRegister.byteRegisters.r2 &= ~mask;
+        }
+    }
+    inline bool IsSet() const {
+        constexpr uint8_t mask = 1u << static_cast<uint8_t>( flag );
+        return A.mainRegister.byteRegisters.r2 & mask;
+    }
+
+    inline void Invert() {
+        constexpr uint8_t mask = 1u << static_cast<uint8_t>( flag );
+        A.mainRegister.byteRegisters.r2 ^= mask;
+    }
+};
+
+FlagControl<Flags::Carry> CarryFlag;
+FlagControl<Flags::AddSub> AddSubFlag;
+FlagControl<Flags::ParityOverflow> ParityOverflowFlag;
+FlagControl<Flags::HalfCarry> HalfCarryFlag;
+FlagControl<Flags::Zero> ZeroFlag;
+FlagControl<Flags::Sign> SignFlag;
+#pragma endregion
 
 /***********************************
 *  Memory access
@@ -472,7 +493,7 @@ static inline void OperationLD() {
 }
 
 static inline uint8_t POP8() {
-    return MemoryAccess::Read<uint8_t>( SP-- );
+    return MemoryAccess::Read<uint8_t>( SP++ );
 }
 static inline uint16_t POP16() {
     uint16_t value = POP8();
@@ -482,9 +503,13 @@ template<RegisterSet &registerSet>
 static inline void OperationPop() {
     OperationBase<POP16, AddressingModes::RegisterWrite<registerSet>>();
 }
+template<uint16_t &reg>
+static inline void OperationPOP() {
+    OperationBase<POP16, AddressingModes::RegisterWrite<reg>>();
+}
 
 static inline void PUSH8( uint8_t data ) {
-    MemoryAccess::Write( ++SP, data );
+    MemoryAccess::Write( --SP, data );
 }
 static inline void PUSH16( uint16_t data ) {
     PUSH8( static_cast<uint8_t>( ( data >> 8 ) & 0x00FF ) );
@@ -494,20 +519,26 @@ template<RegisterSet &registerSet>
 static inline void OperationPush() {
     OperationBase<PUSH16, AddressingModes::RegisterRead<registerSet>>();
 }
+template<uint16_t &reg>
+static inline void OperationPUSH() {
+    OperationBase<PUSH16, AddressingModes::RegisterRead<reg>>();
+}
 
+// Exchange main/alt registers of a given register set
 template<RegisterSet &registerSet>
 static inline void EX() {
-    // TODO
     registerSet.alternateRegister.word = std::exchange( registerSet.mainRegister.word, registerSet.alternateRegister.word );
 }
+
+// Exchange main registers of two different sets
 template<RegisterSet &registerSet1, RegisterSet &registerSet2>
 static inline void EX() {
-    // TODO
     registerSet1.mainRegister.word = std::exchange( registerSet2.mainRegister.word, registerSet1.mainRegister.word );
 }
+
+// Exchange 16 bits of memory data with a given register set
 template<RegisterSet &registerSet>
 static inline uint16_t EX_mem( uint16_t memoryData ) {
-    // TODO
     // Return value is written to memory
     uint16_t toReturn = AddressingModes::RegisterRead<registerSet>();
     AddressingModes::RegisterWrite<registerSet>( memoryData );
@@ -515,7 +546,6 @@ static inline uint16_t EX_mem( uint16_t memoryData ) {
 }
 template<uint16_t &reg>
 static inline uint16_t EX_mem( uint16_t memoryData ) {
-    // TODO
     // Return value is written to memory
     uint16_t toReturn = AddressingModes::RegisterRead<reg>();
     AddressingModes::RegisterWrite<reg>( memoryData );
@@ -525,104 +555,40 @@ template<auto WriteMode, auto ReadMode, uint16_t &reg>
 static inline void OperationEX() {
     OperationBase<EX_mem<reg>, WriteMode, ReadMode>();
 }
+
+// Exchange main/alt registers of BC, DE, and HL register sets
 static inline void EXX() {
-    // Implied register access
-    // TODO
     EX<BC>();
     EX<DE>();
     EX<HL>();
 }
 
-template<uint16_t &reg>
-static inline void OperationPOP() {
-    OperationBase<POP16, AddressingModes::RegisterWrite<reg>>();
-}
-
-template<uint16_t &reg>
-static inline void OperationPUSH() {
-    OperationBase<PUSH16, AddressingModes::RegisterRead<reg>>();
-}
 #pragma endregion
 
-/**********************************
- *  Block Transfer & Search
- *********************************/
-#pragma region BlockTransferAndSearch
-template<bool increment, bool repeat>
-static inline uint8_t LDN( uint8_t O1 ) {
-    // TODO
-    --BC.mainRegister.word;
-    if constexpr ( increment ) {
-        ++DE.mainRegister.word;
-        ++HL.mainRegister.word;
-    }
-    else {
-        --DE.mainRegister.word;
-        --HL.mainRegister.word;
-    }
-    if constexpr( repeat ) {
-        if ( BC.mainRegister.word != 0 ) {
-            // TODO - reset PC
-        }
-    }
-    return O1;
-}
-template<bool increment, bool repeat>
-static inline void OperationLDN() {
-    OperationBase<LDN<increment, repeat>, AddressingModes::AddressWrite<DE, uint8_t>, AddressingModes::AddressRead<HL, uint8_t>>();
-}
-
-template<bool increment, bool repeat>
-static inline void CPN( uint8_t O1 ) {
-    // TODO
-    (void) O1;
-    --BC.mainRegister.word;
-    if constexpr ( increment ) {
-        ++HL.mainRegister.word;
-    }
-    else {
-        --HL.mainRegister.word;
-    }
-    if constexpr( repeat ) {
-        if ( BC.mainRegister.word != 0 ) {
-            // TODO - reset PC
-        }
-    }
-}
-template<bool increment, bool repeat>
-static inline void OperationCPN() {
-    OperationBase<CPN<increment, repeat>, AddressingModes::AddressRead<HL, uint8_t>>();
-}
-#pragma endregion
 /**********************************
  *  Arithmetic & Logic
  *********************************/
 #pragma region ArithmeticAndLogic
-template<IsByteOrWord T>
-static inline T INC( T O1 ) {
-    return O1 + 1;
-}
-static inline uint8_t INC8( uint8_t O1 ) {
-    return INC<uint8_t>( O1 );
-}
-static inline uint16_t INC16( uint16_t O1 ) {
-    return INC<uint16_t>( O1 );
-}
-
-template<IsByteOrWord T>
-static inline T DEC( T O1 ) {
-    return O1 - 1;
-}
-static inline uint8_t DEC8( uint8_t O1 ) {
-    return DEC<uint8_t>( O1 );
-}
-static inline uint16_t DEC16( uint16_t O1 ) {
-    return DEC<uint16_t>( O1 );
-}
 
 template<IsByteOrWord T>
 static inline T ADD( T O1, T O2 ) {
-    return O1 + O2;
+    T result = O1 + O2;
+    
+    AddSubFlag = false;
+
+    if constexpr ( std::is_same<T, uint8_t>::value ) {
+        ZeroFlag = result == 0;
+        SignFlag = result & 0x80;
+        CarryFlag = O1 > 0xFF - O2;
+        HalfCarryFlag = ( ( O1 & 0x0F ) + ( O2 & 0x0F ) ) > 0x0F;
+        ParityOverflowFlag = (~( O1 ^ O2 ) & ( O1 ^ result ) ) & 0x80;
+    }
+    else {
+        CarryFlag = O1 > 0xFFFF - O2;
+        HalfCarryFlag = ( ( O1 & 0x0FFF ) + ( O2 & 0x0FFF ) ) > 0x0FFF;
+    }
+    
+    return result;
 }
 static inline uint8_t ADD8( uint8_t O1, uint8_t O2 ) {
     return ADD<uint8_t>( O1, O2 );
@@ -630,96 +596,6 @@ static inline uint8_t ADD8( uint8_t O1, uint8_t O2 ) {
 static inline uint16_t ADD16( uint16_t O1, uint16_t O2 ) {
     return ADD<uint16_t>( O1, O2 );
 }
-
-template<IsByteOrWord T>
-static inline T ADC( T O1, T O2 ) {
-    return O1 + O2 + 0; // TODO - get carry flag
-}
-static inline uint8_t ADC8( uint8_t O1, uint8_t O2 ) {
-    return ADC<uint8_t>( O1, O2 );
-}
-static inline uint16_t ADC16( uint16_t O1, uint16_t O2 ) {
-    return ADC<uint16_t>( O1, O2 );
-}
-
-template<IsByteOrWord T>
-static inline T SUB( T O1, T O2 ) {
-    // TODO
-    return O1 - O2;
-}
-static inline uint8_t SUB8( uint8_t O1, uint8_t O2 ) {
-    return SUB<uint8_t>( O1, O2 );
-}
-static inline uint16_t SUB16( uint16_t O1, uint16_t O2 ) {
-    return SUB<uint16_t>( O1, O2 );
-}
-
-template<IsByteOrWord T>
-static inline T SBC( T O1, T O2 ) {
-    // TODO
-    return O1 - O2;
-}
-static inline uint8_t SBC8( uint8_t O1, uint8_t O2 ) {
-    return SBC<uint8_t>( O1, O2 );
-}
-static inline uint16_t SBC16( uint16_t O1, uint16_t O2 ) {
-    return SBC<uint16_t>( O1, O2 );
-}
-
-template<IsByteOrWord T>
-static inline T XOR( T O1, T O2 ) {
-    // TODO
-    return O1 ^ O2;
-}
-static inline uint8_t XOR8( uint8_t O1, uint8_t O2 ) {
-    return XOR<uint8_t>( O1, O2 );
-}
-static inline uint16_t XOR16( uint16_t O1, uint16_t O2 ) {
-    return XOR<uint16_t>( O1, O2 );
-}
-
-template<IsByteOrWord T>
-static inline T OR( T O1, T O2 ) {
-    // TODO
-    return O1 | O2;
-}
-static inline uint8_t OR8( uint8_t O1, uint8_t O2 ) {
-    return OR<uint8_t>( O1, O2 );
-}
-static inline uint16_t OR16( uint16_t O1, uint16_t O2 ) {
-    return OR<uint16_t>( O1, O2 );
-}
-
-template<IsByteOrWord T>
-static inline T AND( T O1, T O2 ) {
-    // TODO
-    return O1 & O2;
-}
-static inline uint8_t AND8( uint8_t O1, uint8_t O2 ) {
-    return AND<uint8_t>( O1, O2 );
-}
-static inline uint16_t AND16( uint16_t O1, uint16_t O2 ) {
-    return AND<uint16_t>( O1, O2 );
-}
-
-template<uint16_t &reg>
-static inline void OperationINC() {
-    OperationBase<INC16, AddressingModes::RegisterWrite<reg>, AddressingModes::RegisterRead<reg>>();
-}
-template<auto WriteMode, auto ReadMode>
-static inline void OperationINC() {
-    OperationBase<INC8, WriteMode, ReadMode>();
-}
-template<uint16_t &reg>
-static inline void OperationDEC() {
-    OperationBase<DEC16, AddressingModes::RegisterWrite<reg>, AddressingModes::RegisterRead<reg>>();
-}
-template<auto WriteMode, auto ReadMode>
-static inline void OperationDEC() {
-    OperationBase<DEC8, WriteMode, ReadMode>();
-}
-
-
 template<uint16_t &reg, RegisterSet &registerSet>
 static inline void OperationADD() {
     OperationBase<ADD16, AddressingModes::RegisterWrite<reg>, AddressingModes::RegisterRead<reg>, AddressingModes::RegisterRead<registerSet>>();
@@ -733,94 +609,326 @@ static inline void OperationADD() {
     OperationBase<ADD8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
 }
 
+template<IsByteOrWord T>
+static inline T ADC( T O1, T O2 ) {
+    const uint8_t carry = CarryFlag.IsSet() ? 0x01 : 0x00;
+    T result = O1 + O2 + carry;
+    
+    AddSubFlag = false;
+    if constexpr ( std::is_same<T, uint8_t>::value ) {
+        SignFlag = result & 0x80;
+        ZeroFlag = result == 0;
+        HalfCarryFlag = ( ( O1 & 0x0F ) + ( O2 & 0x0F ) + carry ) > 0x0F;
+        CarryFlag = O1 > 0xFF - O2 - carry;
+        ParityOverflowFlag = (~( O1 ^ O2 ) & ( O1 ^ result ) ) & 0x80;
+    }
+    else {
+        SignFlag = result & 0x8000;
+        ZeroFlag = result == 0;
+        CarryFlag = O1 > 0xFFFF - O2;
+        HalfCarryFlag = ( ( O1 & 0x0FFF ) + ( O2 & 0x0FFF ) ) > 0x0FFF;
+        ParityOverflowFlag = (~( O1 ^ O2 ) & ( O1 ^ result ) ) & 0x8000;
+    }
+
+    return result;
+}
+static inline uint8_t ADC8( uint8_t O1, uint8_t O2 ) {
+    return ADC<uint8_t>( O1, O2 );
+}
+static inline uint16_t ADC16( uint16_t O1, uint16_t O2 ) {
+    return ADC<uint16_t>( O1, O2 );
+}
 template<auto ReadMode>
 static inline void OperationADC() {
     OperationBase<ADC8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
 }
 
+static inline uint8_t SUB( uint8_t O1, uint8_t O2 ) {
+    // TODO - verify this
+    uint8_t negO2 = ( ~O2 ) + 1u;
+    uint8_t result = ADD<uint8_t>( O1, negO2 );
+    CarryFlag.Invert();
+    HalfCarryFlag.Invert();
+    AddSubFlag = true;
+    return result;
+}
 template<auto ReadMode>
 static inline void OperationSUB() {
-    OperationBase<SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+    OperationBase<SUB, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
 }
 
+template<IsByteOrWord T>
+static inline T SBC( T O1, T O2 ) {
+    // TODO - verify
+    CarryFlag.Invert();
+    T negO2 = ~O2 + 1u;
+
+    T result = ADC<T>( O1, negO2 );
+
+    CarryFlag.Invert();
+    HalfCarryFlag.Invert();
+    AddSubFlag = true;
+    return result;
+}
+static inline uint8_t SBC8( uint8_t O1, uint8_t O2 ) {
+    return SBC<uint8_t>( O1, O2 );
+}
+static inline uint16_t SBC16( uint16_t O1, uint16_t O2 ) {
+    return SBC<uint16_t>( O1, O2 );
+}
 template<auto ReadMode>
 static inline void OperationSBC() {
     OperationBase<SBC8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
 }
 
-template<auto ReadMode>
-static inline void OperationAND() {
-    OperationBase<AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+template<IsByteOrWord T>
+static inline T INC( T O1 ) {
+    T result = O1 + 1;
+    if constexpr ( std::is_same<T, uint8_t>::value ) {
+        ZeroFlag = result == 0;
+        SignFlag = result & 0x80;
+        HalfCarryFlag = O1 == 0x0F;
+        ParityOverflowFlag = O1 == 0x7F;
+        AddSubFlag = false;
+    }
+    return result;
 }
-
-template<auto ReadMode>
-static inline void OperationXOR() {
-    OperationBase<XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+static inline uint8_t INC8( uint8_t O1 ) {
+    return INC<uint8_t>( O1 );
 }
-
-template<auto ReadMode>
-static inline void OperationOR() {
-    OperationBase<OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+static inline uint16_t INC16( uint16_t O1 ) {
+    return INC<uint16_t>( O1 );
+}
+template<uint16_t &reg>
+static inline void OperationINC() {
+    OperationBase<INC16, AddressingModes::RegisterWrite<reg>, AddressingModes::RegisterRead<reg>>();
+}
+template<auto WriteMode, auto ReadMode>
+static inline void OperationINC() {
+    OperationBase<INC8, WriteMode, ReadMode>();
 }
 
 template<IsByteOrWord T>
-static inline void CP( T O1, T O2 ) {
-    // TODO
-    (void) O1;
-    (void) O2;
+static inline T DEC( T O1 ) {
+    T result = O1 - 1;
+    if constexpr ( std::is_same<T, uint8_t>::value ) {
+        ZeroFlag = result == 0;
+        SignFlag = result & 0x80;
+        HalfCarryFlag = O1 == 0x10;
+        ParityOverflowFlag = O1 == 0x80;
+        AddSubFlag = true;
+    }
+    return result;
 }
-static inline void CP8( uint8_t O1, uint8_t O2 ) {
-    CP<uint8_t>( O1, O2 );
+static inline uint8_t DEC8( uint8_t O1 ) {
+    return DEC<uint8_t>( O1 );
 }
-static inline void CP16( uint16_t O1, uint16_t O2 ) {
-    CP<uint16_t>( O1, O2 );
+static inline uint16_t DEC16( uint16_t O1 ) {
+    return DEC<uint16_t>( O1 );
+}
+template<uint16_t &reg>
+static inline void OperationDEC() {
+    OperationBase<DEC16, AddressingModes::RegisterWrite<reg>, AddressingModes::RegisterRead<reg>>();
+}
+template<auto WriteMode, auto ReadMode>
+static inline void OperationDEC() {
+    OperationBase<DEC8, WriteMode, ReadMode>();
+}
+
+static inline uint8_t AND( uint8_t O1, uint8_t O2 ) {
+    uint8_t result = O1 & O2;
+
+    SignFlag = result & 0x80;
+    ZeroFlag = result == 0;
+    HalfCarryFlag = true;
+    AddSubFlag = false;
+    CarryFlag = false;
+    // TODO - ParityOverflowFlag;
+    
+    return result;
+}
+template<auto ReadMode>
+static inline void OperationAND() {
+    OperationBase<AND, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+}
+
+static inline uint8_t OR( uint8_t O1, uint8_t O2 ) {
+    uint8_t result = O1 | O2;
+
+    SignFlag = result & 0x80;
+    ZeroFlag = result == 0;
+    HalfCarryFlag = true;
+    AddSubFlag = false;
+    CarryFlag = false;
+    // TODO - ParityOverflowFlag;
+    
+    return result;
+}
+template<auto ReadMode>
+static inline void OperationOR() {
+    OperationBase<OR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+}
+
+static inline uint8_t XOR( uint8_t O1, uint8_t O2 ) {
+    uint8_t result = O1 ^ O2;
+
+    SignFlag = result & 0x80;
+    ZeroFlag = result == 0;
+    HalfCarryFlag = false;
+    AddSubFlag = false;
+    CarryFlag = false;
+    // TODO - ParityOverflowFlag;
+    
+    return result;
+}
+template<auto ReadMode>
+static inline void OperationXOR() {
+    OperationBase<XOR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, ReadMode>();
+}
+
+static inline void CP( uint8_t O1, uint8_t O2 ) {
+    // TODO - verify
+    SUB( O1, O2 );
 }
 template<auto ReadMode>
 static inline void OperationCP() {
-    OperationBase<CP8, AddressingModes::RegisterRead<A, true>, ReadMode>();
+    OperationBase<CP, AddressingModes::RegisterRead<A, true>, ReadMode>();
 }
 
 static inline uint8_t DAA( uint8_t O1 ) {
-    // TODO
-    (void) O1;
+    // TODO - verify
+    if ( HalfCarryFlag.IsSet() || ( ( O1 & 0x0F ) > 9 ) ) {
+        if ( AddSubFlag.IsSet() ) {
+            O1 -= 0x06;
+        }
+        else {
+            O1 += 0x06;
+        }
+    }
+    if ( CarryFlag.IsSet() || ( ( O1 & 0xF0 ) > ( 9 << 4 ) ) ) {
+        if ( AddSubFlag.IsSet() ) {
+            O1 -= 0x60;
+        }
+        else {
+            O1 += 0x60;
+        }
+    }
     return O1;
 }
 
 static inline void CPL() {
-    // TODO
+    A.mainRegister.word = ~A.mainRegister.word;
+    HalfCarryFlag = true;
+    AddSubFlag = true;
 }
 
 static inline uint8_t NEG( uint8_t O1 ) {
-    return ( ~O1 ) + 1;
+    // TODO - verify
+    return SUB( 0u, O1 );
 }
 static inline void OperationNEG() {
     OperationBase<NEG, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>>();
 }
 
 static inline uint8_t CCF( uint8_t O1 ) {
-    // TODO
+    AddSubFlag = false;
     return O1 ^ ( 1u << static_cast<uint8_t>( Flags::Carry ) );
 }
 
 static inline uint8_t SCF( uint8_t O1 ) {
-    // TODO
-    (void) O1;
+    AddSubFlag = false;
+    HalfCarryFlag = false;
     return O1 | ( 1 << static_cast<uint8_t>( Flags::Carry ) );
 }
 
 #pragma endregion
+
+/**********************************
+ *  Block Transfer & Search
+ *********************************/
+#pragma region BlockTransferAndSearch
+template<bool increment, bool repeat>
+static inline uint8_t LDN( uint8_t O1 ) {
+    --BC.mainRegister.word;
+    if constexpr ( increment ) {
+        ++DE.mainRegister.word;
+        ++HL.mainRegister.word;
+    }
+    else {
+        --DE.mainRegister.word;
+        --HL.mainRegister.word;
+    }
+
+    if constexpr( repeat ) {
+        if ( BC.mainRegister.word > 0 ) {
+            nextPC = PC;
+        }
+        else {
+            ParityOverflowFlag = false;
+            AddSubFlag = false;
+        }
+    }
+    else {
+        ParityOverflowFlag = BC.mainRegister.word > 0;
+        AddSubFlag = false;
+    }
+
+    return O1;
+}
+template<bool increment, bool repeat>
+static inline void OperationLDN() {
+    OperationBase<LDN<increment, repeat>, AddressingModes::AddressWrite<DE, uint8_t>, AddressingModes::AddressRead<HL, uint8_t>>();
+}
+
+template<bool increment, bool repeat>
+static inline void CPN( uint8_t O1 ) {
+    bool prevCarry = CarryFlag.IsSet();
+    CP( A.mainRegister.byteRegisters.r1, O1 );
+    CarryFlag = prevCarry;
+
+    --BC.mainRegister.word;
+    if constexpr ( increment ) {
+        ++HL.mainRegister.word;
+    }
+    else {
+        --HL.mainRegister.word;
+    }
+    if constexpr( repeat ) {
+        if ( BC.mainRegister.word > 0 && !ZeroFlag.IsSet() ) {
+            nextPC = PC;
+        }
+        else {
+            ParityOverflowFlag = false;
+            AddSubFlag = true;
+        }
+    }
+    else {
+        ParityOverflowFlag = BC.mainRegister.word > 0;
+        AddSubFlag = true;
+    }
+}
+template<bool increment, bool repeat>
+static inline void OperationCPN() {
+    OperationBase<CPN<increment, repeat>, AddressingModes::AddressRead<HL, uint8_t>>();
+}
+#pragma endregion
+
 /**********************************
  *  Rotate & Shift
  *********************************/
 #pragma region RotateAndShift
-static inline uint8_t RLCA( uint8_t O1 ) {
-    // TODO
-    return O1 << 1;
-}
 static inline uint8_t RLC( uint8_t O1 ) {
-    // TODO
-    return O1 << 1;
+    HalfCarryFlag = false;
+    AddSubFlag = false;
+    const bool carrySet = O1 & 0x80;
+    CarryFlag = carrySet;
+    return ( O1 << 1 ) | ( carrySet ? 0x01 : 0x00 );
 }
+
+static inline uint8_t RLCA( uint8_t O1 ) {
+    return RLC( O1 );
+}
+
 template<auto ExtraWriteRegisterMode>
 static inline uint8_t RLC1( uint8_t value ) {
     value = RLC( value );
@@ -835,7 +943,6 @@ template<RegisterSet &registerSet>
 static inline void OperationRLC() {
     OperationBase<RLC, AddressingModes::AddressWrite<registerSet, uint8_t>, AddressingModes::AddressRead<registerSet, uint8_t>>();
 }
-
 template<auto ExtraWriteRegisterMode, auto WriteMode, auto ReadMode>
 static inline void OperationRLC() {
     OperationBase<RLC1<ExtraWriteRegisterMode>, WriteMode, ReadMode>();
@@ -845,15 +952,15 @@ static inline void OperationRLC() {
     OperationBase<RLC, WriteMode, ReadMode>();
 }
 
-
-
-static inline uint8_t RRCA( uint8_t O1 ) {
-    // TODO
-    return O1 >> 1;
-}
 static inline uint8_t RRC( uint8_t O1 ) {
-    // TODO
-    return O1 >> 1;
+    HalfCarryFlag = false;
+    AddSubFlag = false;
+    const bool carrySet = O1 & 0x01;
+    CarryFlag = carrySet;
+    return ( O1 >> 1 ) | ( carrySet ? 0x80 : 0x00 );
+}
+static inline uint8_t RRCA( uint8_t O1 ) {
+    return RRC( O1 );
 }
 template<auto ExtraWriteRegisterMode>
 static inline uint8_t RRC1( uint8_t value ) {
@@ -878,14 +985,15 @@ static inline void OperationRRC() {
     OperationBase<RRC, WriteMode, ReadMode>();
 }
 
-
-static inline uint8_t RLA( uint8_t O1 ) {
-    // TODO
-    return O1 << 1;
-}
 static inline uint8_t RL( uint8_t O1 ) {
-    // TODO
-    return O1 << 1;
+    HalfCarryFlag = false;
+    AddSubFlag = false;
+    const uint8_t prevCarryAdd = CarryFlag.IsSet() ? 0x01 : 0x00;
+    CarryFlag = O1 & 0x80;
+    return ( O1 << 1 ) | prevCarryAdd;
+}
+static inline uint8_t RLA( uint8_t O1 ) {
+    return RL( O1 );
 }
 template<auto ExtraWriteRegisterMode>
 static inline uint8_t RL1( uint8_t value ) {
@@ -910,14 +1018,15 @@ static inline void OperationRL() {
     OperationBase<RL, WriteMode, ReadMode>();
 }
 
-
-static inline uint8_t RRA( uint8_t O1 ) {
-    // TODO
-    return O1 >> 1;
-}
 static inline uint8_t RR( uint8_t O1 ) {
-    // TODO
-    return O1 >> 1;
+    HalfCarryFlag = false;
+    AddSubFlag = false;
+    const uint8_t prevCarryAdd = CarryFlag.IsSet() ? 0x80 : 0x00;
+    CarryFlag = O1 & 0x01;
+    return ( O1 >> 1 ) | prevCarryAdd;
+}
+static inline uint8_t RRA( uint8_t O1 ) {
+    return RR( O1 );
 }
 template<auto ExtraWriteRegisterMode>
 static inline uint8_t RR1( uint8_t value ) {
@@ -942,11 +1051,18 @@ static inline void OperationRR() {
     OperationBase<RR, WriteMode, ReadMode>();
 }
 
-
-
 static inline uint8_t SLA( uint8_t O1 ) {
-    // TODO
-    return O1 << 1;
+    HalfCarryFlag = false;
+    AddSubFlag = false;
+    CarryFlag = O1 & 0x80;
+
+    uint8_t result = O1 << 1;
+    SignFlag = result & 0x80;
+    ZeroFlag = result == 0;
+    HalfCarryFlag = false;
+    // TODO - parity
+    AddSubFlag = false;
+    return result;
 }
 template<auto ExtraWriteRegisterMode>
 static inline uint8_t SLA1( uint8_t value ) {
@@ -972,10 +1088,17 @@ static inline void OperationSLA() {
     OperationBase<SLA, WriteMode, ReadMode>();
 }
 
-
 static inline uint8_t SRA( uint8_t O1 ) {
-    // TODO
-    return O1 >> 1;
+    uint8_t neg = O1 & 0x80;
+    CarryFlag = O1 & 0x01;
+
+    uint8_t result = ( O1 >> 1 ) | neg;
+    SignFlag = neg;
+    ZeroFlag = result == 0;
+    HalfCarryFlag = false;
+    // TODO - parity
+    AddSubFlag = false;
+    return result;
 }
 template<auto ExtraWriteRegisterMode>
 static inline uint8_t SRA1( uint8_t value ) {
@@ -1000,10 +1123,18 @@ static inline void OperationSRA() {
     OperationBase<SRA, WriteMode, ReadMode>();
 }
 
-
 static inline uint8_t SLL( uint8_t O1 ) {
-    // TODO
-    return O1 << 1;
+    HalfCarryFlag = false;
+    AddSubFlag = false;
+    CarryFlag = O1 & 0x80;
+
+    uint8_t result = ( O1 << 1 ) | 0x01;
+    SignFlag = result & 0x80;
+    ZeroFlag = false;
+    HalfCarryFlag = false;
+    // TODO - parity
+    AddSubFlag = false;
+    return result;
 }
 template<auto ExtraWriteRegisterMode>
 static inline uint8_t SLL1( uint8_t value ) {
@@ -1028,10 +1159,16 @@ static inline void OperationSLL() {
     OperationBase<SLL, WriteMode, ReadMode>();
 }
 
-
 static inline uint8_t SRL( uint8_t O1 ) {
-    // TODO
-    return O1 >> 1;
+    CarryFlag = O1 & 0x01;
+
+    uint8_t result = ( O1 >> 1 ) & 0x7F;
+    SignFlag = false;
+    ZeroFlag = result == 0;
+    HalfCarryFlag = false;
+    // TODO - parity
+    AddSubFlag = false;
+    return result;
 }
 template<auto ExtraWriteRegisterMode>
 static inline uint8_t SRL1( uint8_t value ) {
@@ -1057,15 +1194,45 @@ static inline void OperationSRL() {
 }
 
 static inline uint8_t RLD( uint8_t O1 ) {
-    // TODO
-    (void) O1;
-    return 0;
+    uint8_t result = 0;
+
+    uint8_t accLowOrder = A.mainRegister.byteRegisters.r1 & 0x0F;
+    uint8_t lowOrderMem = O1 & 0x0F;
+    uint8_t highOrderMem = O1 & 0xF0;
+
+    result |= accLowOrder;
+    result |= lowOrderMem << 4;
+
+    A.mainRegister.byteRegisters.r1 &= 0xF0;
+    A.mainRegister.byteRegisters.r1 |= highOrderMem >> 4;
+    
+    SignFlag = A.mainRegister.byteRegisters.r1 & 0x80;
+    ZeroFlag = A.mainRegister.byteRegisters.r1 == 0;
+    HalfCarryFlag = false;
+    // TODO - parity
+    AddSubFlag = false;
+    return result;
 }
 
 static inline uint8_t RRD( uint8_t O1 ) {
-    // TODO
-    (void) O1;
-    return 0;
+    uint8_t result = 0;
+
+    uint8_t accLowOrder = A.mainRegister.byteRegisters.r1 & 0x0F;
+    uint8_t lowOrderMem = O1 & 0x0F;
+    uint8_t highOrderMem = O1 & 0xF0;
+
+    result |= accLowOrder << 4;
+    result |= lowOrderMem;
+
+    A.mainRegister.byteRegisters.r1 &= 0xF0;
+    A.mainRegister.byteRegisters.r1 |= lowOrderMem;
+    
+    SignFlag = A.mainRegister.byteRegisters.r1 & 0x80;
+    ZeroFlag = A.mainRegister.byteRegisters.r1 == 0;
+    HalfCarryFlag = false;
+    // TODO - parity
+    AddSubFlag = false;
+    return result;
 }
 
 
@@ -1076,8 +1243,8 @@ static inline uint8_t RRD( uint8_t O1 ) {
 #pragma region BitManipulation
 template <uint8_t BitPos>
 static inline void BIT( uint8_t O1 ) {
-    bool bitVal = O1 & ( 1u << BitPos );
-    (void) bitVal;
+    HalfCarryFlag = true;
+    ZeroFlag = O1 & ( 1u << BitPos );
 }
 template<uint8_t BitPos, RegisterSet &registerSet, bool lowByte>
 static inline void OperationBIT() {
@@ -1152,101 +1319,91 @@ static inline void OperationSET() {
  *  Jump, Call, & Return
  *********************************/
 #pragma region JumpCallAndReturn
-static inline uint16_t JR( int8_t O1, bool condition ) {
+static inline void JR( int8_t O1, bool condition ) {
     // TODO
+    nextPC = PC + O1;
     if ( condition ) {
-        return PC + O1;
+        nextPC = PC + O1;
     }
     else {
-        return PC;
     }
 }
-
-static inline uint16_t JR1( int8_t O1 ) {
-    return JR( O1, true );
+static inline void JR1( int8_t O1 ) {
+    JR( O1, true );
+}
+static inline void DJNZ( int8_t O1 ) {
+    JR( O1, AddressingModes::RegisterRead<BC, true>() != 0 );
 }
 
-static inline uint16_t RET( bool condition ) {
-    // TODO
-    (void) condition;
-    return 0;
-}
-
-static inline uint16_t RET1() {
-    return RET( true );
-}
-
-static inline uint16_t JP( uint16_t O1, bool condition ) {
+static inline void JP( uint16_t O1, bool condition ) {
     if ( condition ) {
-        return O1;
+        nextPC = O1;
     }
-    return PC;
 }
-
-static inline uint16_t JP1( uint16_t O1 ) {
-    return JP( O1, true );
+static inline void JP1( uint16_t O1 ) {
+    JP( O1, true );
 }
-
 template<auto ConditionOp>
     requires std::is_same<std::invoke_result_t<decltype(ConditionOp)>, bool>::value
 static inline void OperationJP() {
-    OperationBase<JP, AddressingModes::RegisterWrite<PC>, AddressingModes::ImmediateExtended<0>, ConditionOp>();
+    OperationBase<JP, AddressingModes::ImmediateExtended<0>, ConditionOp>();
 }
-
 static inline void OperationJP() {
-    OperationBase<JP1, AddressingModes::RegisterWrite<PC>, AddressingModes::ImmediateExtended<0>>();
-}
-
-static inline uint16_t CALL( uint16_t addr, bool condition ) {
-    // TODO
-    if( condition ) {
-        return addr;
-    }
-    return PC;
-}
-
-static inline uint16_t CALL1( uint16_t addr ) {
-    // TODO
-    return CALL( addr, true );
-}
-
-template<auto ConditionOp>
-    requires std::is_same<std::invoke_result_t<decltype(ConditionOp)>, bool>::value
-static inline void OperationCall() {
-    OperationBase<CALL, AddressingModes::RegisterWrite<PC>, AddressingModes::ImmediateExtended<0>, ConditionOp>();
-}
-
-static inline void OperationCall() {
-    OperationBase<CALL1, AddressingModes::RegisterWrite<PC>, AddressingModes::ImmediateExtended<0>>();
-}
-
-static inline void OperationRETN() {
-    // TODO
-}
-
-static inline void RETI( ) {
-    // TODO
+    OperationBase<JP1, AddressingModes::ImmediateExtended<0>>();
 }
 template<uint16_t &reg>
 static inline void OperationJP() {
-    OperationBase<JP1, AddressingModes::RegisterWrite<PC>, AddressingModes::RegisterRead<reg>>();
+    OperationBase<JP1, AddressingModes::RegisterRead<reg>>();
 }
 
-static inline uint16_t DJNZ( int8_t O1 ) {
-    // TODO
-    return PC + O1;
+static inline void CALL( uint16_t addr, bool condition ) {
+    if( condition ) {
+        PUSH16( nextPC );
+        nextPC = addr;
+    }
+}
+static inline void CALL1( uint16_t addr ) {
+    return CALL( addr, true );
+}
+template<auto ConditionOp>
+    requires std::is_same<std::invoke_result_t<decltype(ConditionOp)>, bool>::value
+static inline void OperationCall() {
+    OperationBase<CALL, AddressingModes::ImmediateExtended<0>, ConditionOp>();
+}
+static inline void OperationCall() {
+    OperationBase<CALL1, AddressingModes::ImmediateExtended<0>>();
 }
 
+static inline void RET( bool condition ) {
+    if ( condition ) {
+        nextPC = POP16();
+    }
+}
+static inline void RET1() {
+    RET( true );
+}
+
+static inline void RETN() {
+    IFF1 = IFF2;
+    nextPC = POP16();
+}
+static inline void OperationRETN() {
+    OperationBase<RETN>();
+}
+
+static inline void RETI( ) {
+    nextPC = POP16();
+    // TODO - signal IO that IRQ is complete
+}
 
 template<uint16_t resetVector>
-static inline uint16_t RST() {
-    //TODO
-    return resetVector;
+static inline void RST() {
+    PUSH16( nextPC );
+    nextPC = resetVector;
 }
-
 template<uint16_t resetVector>
 static inline void OperationRst() {
-    OperationBase<RST<resetVector>, AddressingModes::RegisterWrite<PC>>();
+    OperationBase<RST<resetVector>>();
 }
 
 #pragma endregion
@@ -1255,31 +1412,31 @@ static inline void OperationRst() {
  *  Input/Output
  *********************************/
 #pragma region InputOutput
-static inline uint8_t IN( uint8_t data ) {
-    // TODO
-    (void) data;
+static inline uint8_t INA( uint8_t data ) {
     return data;
 }
+static inline uint8_t INR( uint8_t data ) {
+    SignFlag = data & 0x80;
+    ZeroFlag = data == 0;
+    HalfCarryFlag = 0;
+    // TODO - parity
+    AddSubFlag = false;
 
+    return data;
+}
 static inline uint8_t OUT( uint8_t data ) {
-    // TODO
-    (void) data;
     return data;
 }
-
 static inline void IN1( uint8_t data ) {
-    // TODO
-    (void) data;
+    INR( data );
 }
-
 static inline uint8_t OUT1() {
-    // TODO
     return 0;
 }
 
 template<bool increment, bool repeat>
 static inline uint8_t INNOUTN8( uint8_t O1 ) {
-    // TODO
+    AddSubFlag = true;
     --BC.mainRegister.byteRegisters.r1;
     if constexpr ( increment ) {
         ++HL.mainRegister.word;
@@ -1287,19 +1444,24 @@ static inline uint8_t INNOUTN8( uint8_t O1 ) {
     else {
         --HL.mainRegister.word;
     }
+
     if constexpr( repeat ) {
         if ( BC.mainRegister.byteRegisters.r1 != 0 ) {
-            // TODO - reset PC
+            nextPC = PC;
         }
+        else {
+            ZeroFlag = BC.mainRegister.byteRegisters.r1 == 0;
+        }
+    }
+    else {
+        ZeroFlag = BC.mainRegister.byteRegisters.r1 == 0;
     }
     return O1;
 }
-
 template<bool increment, bool repeat>
 static inline void OperationINN8() {
     OperationBase<INNOUTN8<increment, repeat>, AddressingModes::AddressWrite<HL, uint8_t>, AddressingModes::PortRead<BC, uint8_t>>();
 }
-
 template<bool increment, bool repeat>
 static inline void OperationOUTN8() {
     OperationBase<INNOUTN8<increment, repeat>, AddressingModes::PortWrite<BC, uint8_t>, AddressingModes::AddressRead<HL, uint8_t>>();
@@ -1315,22 +1477,17 @@ static inline void NOP() {
 }
 
 static inline void HALT() {
-    // TODO
+    nextPC = PC;
 }
 
 template<bool enable>
 static inline void EI_DI() {
-    if constexpr( enable ) {
-        // TODO - enable interrupts
-    }
-    else {
-        // TODO - disable interrupts
-    }
+    IFF1 = IFF2 = enable;
 }
 
 template<uint8_t IMValue>
 static inline void IM() {
-    // TODO
+    InterruptMode = IMValue;
 }
 template<uint8_t IMValue>
 static inline void OperationIM() {
@@ -4357,7 +4514,7 @@ static inline void extendedOpEXTD() {
     switch( opcode ) {
         case 0x40:{
             // TODO - IN B,(C);
-            OperationBase<Operations::IN, AddressingModes::RegisterWrite<BC, true>, AddressingModes::PortRead<BC, uint8_t>>();
+            OperationBase<Operations::INR, AddressingModes::RegisterWrite<BC, true>, AddressingModes::PortRead<BC, uint8_t>>();
             break;
         }
         case 0x41:{
@@ -4397,7 +4554,7 @@ static inline void extendedOpEXTD() {
         }
         case 0x48:{
             // TODO - IN C,(C);
-            OperationBase<Operations::IN, AddressingModes::RegisterWrite<BC, false>, AddressingModes::PortRead<BC, uint8_t>>();
+            OperationBase<Operations::INR, AddressingModes::RegisterWrite<BC, false>, AddressingModes::PortRead<BC, uint8_t>>();
             break;
         }
         case 0x49:{
@@ -4437,7 +4594,7 @@ static inline void extendedOpEXTD() {
         }
         case 0x50:{
             // TODO - IN D,(C);
-            OperationBase<Operations::IN, AddressingModes::RegisterWrite<DE, true>, AddressingModes::PortRead<BC, uint8_t>>();
+            OperationBase<Operations::INR, AddressingModes::RegisterWrite<DE, true>, AddressingModes::PortRead<BC, uint8_t>>();
             break;
         }
         case 0x51:{
@@ -4477,7 +4634,7 @@ static inline void extendedOpEXTD() {
         }
         case 0x58:{
             // TODO - IN E,(C);
-            OperationBase<Operations::IN, AddressingModes::RegisterWrite<DE, false>, AddressingModes::PortRead<BC, uint8_t>>();
+            OperationBase<Operations::INR, AddressingModes::RegisterWrite<DE, false>, AddressingModes::PortRead<BC, uint8_t>>();
             break;
         }
         case 0x59:{
@@ -4517,7 +4674,7 @@ static inline void extendedOpEXTD() {
         }
         case 0x60:{
             // TODO - IN H,(C);
-            OperationBase<Operations::IN, AddressingModes::RegisterWrite<HL, true>, AddressingModes::PortRead<BC, uint8_t>>();
+            OperationBase<Operations::INR, AddressingModes::RegisterWrite<HL, true>, AddressingModes::PortRead<BC, uint8_t>>();
             break;
         }
         case 0x61:{
@@ -4557,7 +4714,7 @@ static inline void extendedOpEXTD() {
         }
         case 0x68:{
             // TODO - IN L,(C);
-            OperationBase<Operations::IN, AddressingModes::RegisterWrite<HL, false>, AddressingModes::PortRead<BC, uint8_t>>();
+            OperationBase<Operations::INR, AddressingModes::RegisterWrite<HL, false>, AddressingModes::PortRead<BC, uint8_t>>();
             break;
         }
         case 0x69:{
@@ -4632,7 +4789,7 @@ static inline void extendedOpEXTD() {
         }
         case 0x78:{
             // TODO - IN A,(C);
-            OperationBase<Operations::IN, AddressingModes::RegisterWrite<A, true>, AddressingModes::PortRead<BC, uint8_t>>();
+            OperationBase<Operations::INA, AddressingModes::RegisterWrite<A, true>, AddressingModes::PortRead<BC, uint8_t>>();
             break;
         }
         case 0x79:{
@@ -6558,7 +6715,7 @@ static inline void operationTick() {
         }
         case 0x10:{
             //TODO - 10 e,DJNZ (PC+e),8/13,2/3,1/1,(met/not met)
-            OperationBase<Operations::DJNZ, AddressingModes::RegisterWrite<PC>, AddressingModes::Relative<0>>();
+            OperationBase<Operations::DJNZ, AddressingModes::Relative<0>>();
             break;
         }
         case 0x11:{
@@ -6598,7 +6755,7 @@ static inline void operationTick() {
         }
         case 0x18:{
             //TODO - 18 e,JR (PC+e),12,3,1
-            OperationBase<Operations::JR1, AddressingModes::RegisterWrite<PC>, AddressingModes::Relative<0>>();
+            OperationBase<Operations::JR1, AddressingModes::Relative<0>>();
             break;
         }
         case 0x19:{
@@ -6638,7 +6795,7 @@ static inline void operationTick() {
         }
         case 0x20:{
             //TODO - 20 e,JR NZ,(PC+e),12/7,3/2,1/1,(met/not met)
-            OperationBase<Operations::JR, AddressingModes::RegisterWrite<PC>, AddressingModes::Relative<0>, AddressingModes::FlagClear<Flags::Zero>>();
+            OperationBase<Operations::JR, AddressingModes::Relative<0>, AddressingModes::FlagClear<Flags::Zero>>();
             break;
         }
         case 0x21:{
@@ -6678,7 +6835,7 @@ static inline void operationTick() {
         }
         case 0x28:{
             //TODO - 28 e,JR Z,(PC+e),12/7,3/2,1/1,(met/not met)
-            OperationBase<Operations::JR, AddressingModes::RegisterWrite<PC>, AddressingModes::Relative<0>, AddressingModes::FlagSet<Flags::Zero>>();
+            OperationBase<Operations::JR, AddressingModes::Relative<0>, AddressingModes::FlagSet<Flags::Zero>>();
             break;
         }
         case 0x29:{
@@ -6718,7 +6875,7 @@ static inline void operationTick() {
         }
         case 0x30:{
             //TODO - 30 e,JR NC,(PC+e),12/7,3/2,1/1,(met/not met)
-            OperationBase<Operations::JR, AddressingModes::RegisterWrite<PC>, AddressingModes::Relative<0>, AddressingModes::FlagClear<Flags::Carry>>();
+            OperationBase<Operations::JR, AddressingModes::Relative<0>, AddressingModes::FlagClear<Flags::Carry>>();
             break;
         }
         case 0x31:{
@@ -6758,7 +6915,7 @@ static inline void operationTick() {
         }
         case 0x38:{
             //TODO - 38 e,JR C,(PC+e),12/7,3/2,1/1,(met/not met)
-            OperationBase<Operations::JR, AddressingModes::RegisterWrite<PC>, AddressingModes::Relative<0>, AddressingModes::FlagSet<Flags::Carry>>();
+            OperationBase<Operations::JR, AddressingModes::Relative<0>, AddressingModes::FlagSet<Flags::Carry>>();
             break;
         }
         case 0x39:{
@@ -7198,42 +7355,42 @@ static inline void operationTick() {
         }
         case 0x90:{
             //TODO - 90,SUB B,4,1,1
-            OperationBase<Operations::SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, true>>();
+            OperationBase<Operations::SUB, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, true>>();
             break;
         }
         case 0x91:{
             //TODO - 91,SUB C,4,1,1
-            OperationBase<Operations::SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, false>>();
+            OperationBase<Operations::SUB, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, false>>();
             break;
         }
         case 0x92:{
             //TODO - 92,SUB D,4,1,1
-            OperationBase<Operations::SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, true>>();
+            OperationBase<Operations::SUB, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, true>>();
             break;
         }
         case 0x93:{
             //TODO - 93,SUB E,4,1,1
-            OperationBase<Operations::SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, false>>();
+            OperationBase<Operations::SUB, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, false>>();
             break;
         }
         case 0x94:{
             //TODO - 94,SUB H,4,1,1
-            OperationBase<Operations::SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, true>>();
+            OperationBase<Operations::SUB, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, true>>();
             break;
         }
         case 0x95:{
             //TODO - 95,SUB L,4,1,1
-            OperationBase<Operations::SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, false>>();
+            OperationBase<Operations::SUB, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, false>>();
             break;
         }
         case 0x96:{
             //TODO - 96,SUB (HL),7,2,1
-            OperationBase<Operations::SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::AddressRead<HL, uint8_t>>();
+            OperationBase<Operations::SUB, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::AddressRead<HL, uint8_t>>();
             break;
         }
         case 0x97:{
             //TODO - 97,SUB A,4,1,1
-            OperationBase<Operations::SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<A, true>>();
+            OperationBase<Operations::SUB, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<A, true>>();
             break;
         }
         case 0x98:{
@@ -7278,167 +7435,167 @@ static inline void operationTick() {
         }
         case 0xA0:{
             //TODO - A0,AND B,4,1,1
-            OperationBase<Operations::AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, true>>();
+            OperationBase<Operations::AND, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, true>>();
             break;
         }
         case 0xA1:{
             //TODO - A1,AND C,4,1,1
-            OperationBase<Operations::AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, false>>();
+            OperationBase<Operations::AND, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, false>>();
             break;
         }
         case 0xA2:{
             //TODO - A2,AND D,4,1,1
-            OperationBase<Operations::AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, true>>();
+            OperationBase<Operations::AND, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, true>>();
             break;
         }
         case 0xA3:{
             //TODO - A3,AND E,4,1,1
-            OperationBase<Operations::AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, false>>();
+            OperationBase<Operations::AND, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, false>>();
             break;
         }
         case 0xA4:{
             //TODO - A4,AND H,4,1,1
-            OperationBase<Operations::AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, true>>();
+            OperationBase<Operations::AND, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, true>>();
             break;
         }
         case 0xA5:{
             //TODO - A5,AND L,4,1,1
-            OperationBase<Operations::AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, false>>();
+            OperationBase<Operations::AND, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, false>>();
             break;
         }
         case 0xA6:{
             //TODO - A6,AND (HL),7,2,1
-            OperationBase<Operations::AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::AddressRead<HL, uint8_t>>();
+            OperationBase<Operations::AND, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::AddressRead<HL, uint8_t>>();
             break;
         }
         case 0xA7:{
             //TODO - A7,AND A,4,1,1
-            OperationBase<Operations::AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<A, true>>();
+            OperationBase<Operations::AND, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<A, true>>();
             break;
         }
         case 0xA8:{
             //TODO - A8,XOR B,4,1,1
-            OperationBase<Operations::XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, true>>();
+            OperationBase<Operations::XOR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, true>>();
             break;
         }
         case 0xA9:{
             //TODO - A9,XOR C,4,1,1
-            OperationBase<Operations::XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, false>>();
+            OperationBase<Operations::XOR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, false>>();
             break;
         }
         case 0xAA:{
             //TODO - AA,XOR D,4,1,1
-            OperationBase<Operations::XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, true>>();
+            OperationBase<Operations::XOR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, true>>();
             break;
         }
         case 0xAB:{
             //TODO - AB,XOR E,4,1,1
-            OperationBase<Operations::XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, false>>();
+            OperationBase<Operations::XOR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, false>>();
             break;
         }
         case 0xAC:{
             //TODO - AC,XOR H,4,1,1
-            OperationBase<Operations::XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, true>>();
+            OperationBase<Operations::XOR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, true>>();
             break;
         }
         case 0xAD:{
             //TODO - AD,XOR L,4,1,1
-            OperationBase<Operations::XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, false>>();
+            OperationBase<Operations::XOR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, false>>();
             break;
         }
         case 0xAE:{
             //TODO - AE,XOR (HL),7,2,1
-            OperationBase<Operations::XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::AddressRead<HL, uint8_t>>();
+            OperationBase<Operations::XOR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::AddressRead<HL, uint8_t>>();
             break;
         }
         case 0xAF:{
             //TODO - AF,XOR A,4,1,1
-            OperationBase<Operations::XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<A, true>>();
+            OperationBase<Operations::XOR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<A, true>>();
             break;
         }
         case 0xB0:{
             //TODO - B0,OR B,4,1,1
-            OperationBase<Operations::OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, true>>();
+            OperationBase<Operations::OR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, true>>();
             break;
         }
         case 0xB1:{
             //TODO - B1,OR C,4,1,1
-            OperationBase<Operations::OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, false>>();
+            OperationBase<Operations::OR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, false>>();
             break;
         }
         case 0xB2:{
             //TODO - B2,OR D,4,1,1
-            OperationBase<Operations::OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, true>>();
+            OperationBase<Operations::OR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, true>>();
             break;
         }
         case 0xB3:{
             //TODO - B3,OR E,4,1,1
-            OperationBase<Operations::OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, false>>();
+            OperationBase<Operations::OR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, false>>();
             break;
         }
         case 0xB4:{
             //TODO - B4,OR H,4,1,1
-            OperationBase<Operations::OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, true>>();
+            OperationBase<Operations::OR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, true>>();
             break;
         }
         case 0xB5:{
             //TODO - B5,OR L,4,1,1
-            OperationBase<Operations::OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, false>>();
+            OperationBase<Operations::OR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, false>>();
             break;
         }
         case 0xB6:{
             //TODO - B6,OR (HL),7,2,1
-            OperationBase<Operations::OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::AddressRead<HL, uint8_t>>();
+            OperationBase<Operations::OR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::AddressRead<HL, uint8_t>>();
             break;
         }
         case 0xB7:{
             //TODO - B7,OR A,4,1,1
-            OperationBase<Operations::OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<A, true>>();
+            OperationBase<Operations::OR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<A, true>>();
             break;
         }
         case 0xB8:{
             //TODO - B8,CP B,4,1,1
-            OperationBase<Operations::CP8, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, true>>();
+            OperationBase<Operations::CP, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, true>>();
             break;
         }
         case 0xB9:{
             //TODO - B9,CP C,4,1,1
-            OperationBase<Operations::CP8, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, false>>();
+            OperationBase<Operations::CP, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<BC, false>>();
             break;
         }
         case 0xBA:{
             //TODO - BA,CP D,4,1,1
-            OperationBase<Operations::CP8, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, true>>();
+            OperationBase<Operations::CP, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, true>>();
             break;
         }
         case 0xBB:{
             //TODO - BB,CP E,4,1,1
-            OperationBase<Operations::CP8, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, false>>();
+            OperationBase<Operations::CP, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<DE, false>>();
             break;
         }
         case 0xBC:{
             //TODO - BC,CP H,4,1,1
-            OperationBase<Operations::CP8, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, true>>();
+            OperationBase<Operations::CP, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, true>>();
             break;
         }
         case 0xBD:{
             //TODO - BD,CP L,4,1,1
-            OperationBase<Operations::CP8, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, false>>();
+            OperationBase<Operations::CP, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<HL, false>>();
             break;
         }
         case 0xBE:{
             //TODO - BE,CP (HL),7,2,1
-            OperationBase<Operations::CP8, AddressingModes::RegisterRead<A, true>, AddressingModes::AddressRead<HL, uint8_t>>();
+            OperationBase<Operations::CP, AddressingModes::RegisterRead<A, true>, AddressingModes::AddressRead<HL, uint8_t>>();
             break;
         }
         case 0xBF:{
             //TODO - BF,CP A,4,1,1
-            OperationBase<Operations::CP8, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<A, true>>();
+            OperationBase<Operations::CP, AddressingModes::RegisterRead<A, true>, AddressingModes::RegisterRead<A, true>>();
             break;
         }
         case 0xC0:{
             //TODO - C0,RET NZ,11/5,3/1,1/1,(met/not met)
-            OperationBase<Operations::RET, AddressingModes::RegisterWrite<PC>, AddressingModes::FlagClear<Flags::Zero>>();
+            OperationBase<Operations::RET, AddressingModes::FlagClear<Flags::Zero>>();
             break;
         }
         case 0xC1:{
@@ -7478,12 +7635,12 @@ static inline void operationTick() {
         }
         case 0xC8:{
             //TODO - C8,RET Z,11/5,3/1,1/1,(met/not met)
-            OperationBase<Operations::RET, AddressingModes::RegisterWrite<PC>, AddressingModes::FlagSet<Flags::Zero>>();
+            OperationBase<Operations::RET, AddressingModes::FlagSet<Flags::Zero>>();
             break;
         }
         case 0xC9:{
             //TODO - C9,RET,10,3,1
-            OperationBase<Operations::RET1, AddressingModes::RegisterWrite<PC>>();
+            OperationBase<Operations::RET1>();
             break;
         }
         case 0xCA:{
@@ -7517,7 +7674,7 @@ static inline void operationTick() {
         }
         case 0xD0:{
             //TODO - D0,RET NC,5,1,1
-            OperationBase<Operations::RET, AddressingModes::RegisterWrite<PC>, AddressingModes::FlagClear<Flags::Carry>>();
+            OperationBase<Operations::RET, AddressingModes::FlagClear<Flags::Carry>>();
             break;
         }
         case 0xD1:{
@@ -7547,7 +7704,7 @@ static inline void operationTick() {
         }
         case 0xD6:{
             //TODO - D6 n,SUB n,7,2,1
-            OperationBase<Operations::SUB8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::Immediate<0>>();
+            OperationBase<Operations::SUB, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::Immediate<0>>();
             break;
         }
         case 0xD7:{
@@ -7557,7 +7714,7 @@ static inline void operationTick() {
         }
         case 0xD8:{
             //TODO - D8,RET C,5,1,1
-            OperationBase<Operations::RET, AddressingModes::RegisterWrite<PC>, AddressingModes::FlagSet<Flags::Carry>>();
+            OperationBase<Operations::RET, AddressingModes::FlagSet<Flags::Carry>>();
             break;
         }
         case 0xD9:{
@@ -7572,7 +7729,7 @@ static inline void operationTick() {
         }
         case 0xDB:{
             //TODO - DB n,IN A,(n),11,3,1
-            OperationBase<Operations::IN, AddressingModes::RegisterWrite<A, true>, AddressingModes::PortRead<AddressingModes::Immediate<0>, uint8_t>>();
+            OperationBase<Operations::INA, AddressingModes::RegisterWrite<A, true>, AddressingModes::PortRead<AddressingModes::Immediate<0>, uint8_t>>();
             break;
         }
         case 0xDC:{
@@ -7597,7 +7754,7 @@ static inline void operationTick() {
         case 0xE0:{
             //TODO - E0,RET PO
             // Parity clear for ODD
-            OperationBase<Operations::RET, AddressingModes::RegisterWrite<PC>, AddressingModes::FlagClear<Flags::ParityOverflow>>();
+            OperationBase<Operations::RET, AddressingModes::FlagClear<Flags::ParityOverflow>>();
             break;
         }
         case 0xE1:{
@@ -7627,7 +7784,7 @@ static inline void operationTick() {
         }
         case 0xE6:{
             //TODO - E6 n,AND n
-            OperationBase<Operations::AND8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::Immediate<0>>();
+            OperationBase<Operations::AND, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::Immediate<0>>();
             break;
         }
         case 0xE7:{
@@ -7637,12 +7794,12 @@ static inline void operationTick() {
         }
         case 0xE8:{
             //TODO - E8,RET PE
-            OperationBase<Operations::RET, AddressingModes::RegisterWrite<PC>, AddressingModes::FlagSet<Flags::ParityOverflow>>();
+            OperationBase<Operations::RET, AddressingModes::FlagSet<Flags::ParityOverflow>>();
             break;
         }
         case 0xE9:{
             //TODO - E9,JP (HL)
-            OperationBase<Operations::JP1, AddressingModes::RegisterWrite<PC>, AddressingModes::AddressRead<HL, uint16_t>>();
+            OperationBase<Operations::JP1, AddressingModes::AddressRead<HL, uint16_t>>();
             break;
         }
         case 0xEA:{
@@ -7666,7 +7823,7 @@ static inline void operationTick() {
         }
         case 0xEE:{
             //TODO - EE n,XOR n
-            OperationBase<Operations::XOR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::Immediate<0>>();
+            OperationBase<Operations::XOR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::Immediate<0>>();
             break;
         }
         case 0xEF:{
@@ -7676,7 +7833,7 @@ static inline void operationTick() {
         }
         case 0xF0:{
             //TODO - F0,RET P
-            OperationBase<Operations::RET, AddressingModes::RegisterWrite<PC>, AddressingModes::FlagClear<Flags::Sign>>();
+            OperationBase<Operations::RET, AddressingModes::FlagClear<Flags::Sign>>();
             break;
         }
         case 0xF1:{
@@ -7706,7 +7863,7 @@ static inline void operationTick() {
         }
         case 0xF6:{
             //TODO - F6 n,OR n
-            OperationBase<Operations::OR8, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::Immediate<0>>();
+            OperationBase<Operations::OR, AddressingModes::RegisterWrite<A, true>, AddressingModes::RegisterRead<A, true>, AddressingModes::Immediate<0>>();
             break;
         }
         case 0xF7:{
@@ -7716,7 +7873,7 @@ static inline void operationTick() {
         }
         case 0xF8:{
             //TODO - F8,RET M
-            OperationBase<Operations::RET, AddressingModes::RegisterWrite<PC>, AddressingModes::FlagSet<Flags::Sign>>();
+            OperationBase<Operations::RET, AddressingModes::FlagSet<Flags::Sign>>();
             break;
         }
         case 0xF9:{
@@ -7745,7 +7902,7 @@ static inline void operationTick() {
         }
         case 0xFE:{
             //TODO - FE n,CP n
-            OperationBase<Operations::CP8, AddressingModes::RegisterRead<A, true>, AddressingModes::Immediate<0>>();
+            OperationBase<Operations::CP, AddressingModes::RegisterRead<A, true>, AddressingModes::Immediate<0>>();
             break;
         }
         case 0xFF:{
@@ -7755,4 +7912,8 @@ static inline void operationTick() {
         }
 
     }
+}
+
+void z80Tick() {
+    operationTick();
 }
