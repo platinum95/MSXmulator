@@ -5,13 +5,17 @@
 #include <functional>
 #include <iostream>
 #include <stdint.h>
+#include <sstream>
 
 #pragma region Concepts
 template<typename T>
-concept IsByteOrWord = std::is_same<T, uint8_t>::value || std::is_same<T, uint16_t>::value || std::is_same<T, bool>::value || std::is_same<T, int8_t>::value;
+concept IsByteOrWord = sizeof( T ) == sizeof( uint8_t ) || sizeof( T ) == sizeof( uint16_t );// std::is_same<T, uint8_t>::value || std::is_same<T, uint16_t>::value || std::is_same<T, bool>::value || std::is_same<T, int8_t>::value;
 
 template<typename T, typename ...args>
 concept ReturnsByteOrWord = IsByteOrWord<std::invoke_result_t<T, args...>>;
+
+template<typename AddressingMode>
+concept ReturnsWord = requires{ { AddressingMode() } -> std::same_as<uint16_t>; };
 
 template<typename T>
 concept WritesByteOrWord = std::is_same<T, void(*)(uint8_t)>::value || std::is_same<T, void(*)(uint16_t)>::value;
@@ -19,11 +23,11 @@ concept WritesByteOrWord = std::is_same<T, void(*)(uint8_t)>::value || std::is_s
 template<typename opType, typename writeType, typename ...readTypes>
 concept WriteMatchesOp = true;// std::is_same<writeType, void(*)(std::invoke_result_t<opType, readTypes...>)>::value;
 
-template<typename opType>
-concept IsInvocableOperationNoParamNoRet = std::is_same<opType, void(*)()>::value;
+template<auto opType>
+concept IsInvocableOperationNoParamNoRet = requires{ { opType() } -> std::same_as<void>; };
 
 template<typename opType, typename readType>
-concept IsInvocableOperationSingleParamNoRet = ReturnsByteOrWord<readType> && std::is_same<opType, void(*)(std::invoke_result_t<readType>)>::value;
+concept IsInvocableOperationSingleParamNoRet = ReturnsByteOrWord<readType> && std::is_same<opType, void(*)(std::invoke_result_t<readType>)>::value; //requires{ { opType() } -> std::same_as<readType>; };
 
 template<typename opType, typename readType1, typename readType2>
 concept IsInvocableOperationDualParamNoRet = std::is_same<opType, void(*)(std::invoke_result_t<readType1>, std::invoke_result_t<readType2>)>::value;
@@ -66,7 +70,7 @@ concept IsDualParamWriteoutOp = IsInvocableOperationDualParamWithRet<decltype(op
 
 #pragma region OperationBases
 template <auto operation>
-    requires IsInvocableOperationNoParamNoRet<decltype(operation)>
+    requires IsInvocableOperationNoParamNoRet<operation>
 void OperationBase() {
     operation();
 }
@@ -120,11 +124,11 @@ enum class Flags {
 
 
 static uint16_t PC;
-static uint16_t SP;
+static uint16_t SPtr;
 static uint16_t IX;
 static uint16_t IY;
-static uint16_t I;
-static uint16_t R;
+static uint8_t I;
+static uint8_t R;
 
 struct RegisterPair {
     uint16_t word;
@@ -302,11 +306,24 @@ static inline uint16_t RegisterRead() {
     return registerSet.mainRegister.word;
 }
 
+// Read given register of size 1-byte
+template<uint8_t& reg>
+static inline uint8_t RegisterRead() {
+    return reg;
+}
+
 // Read word of given register
 template<uint16_t &reg>
 static inline uint16_t RegisterRead() {
     return reg;
 }
+
+// Write given register of size 1-byte
+template<uint8_t& reg>
+static inline void RegisterWrite( uint8_t data ) {
+    reg = data;
+}
+
 // Write word of given register
 template<uint16_t &reg>
 static inline void RegisterWrite( uint16_t data ) {
@@ -355,15 +372,13 @@ static inline uint8_t RegisterRead() {
 }
 
 // Read 8/16 bit value from address given by AddressingMode()
-template<auto AddressingMode, IsByteOrWord ReturnType>
-    requires std::is_same<std::invoke_result_t<decltype(AddressingMode)>, uint16_t>::value
+template<uint16_t(*AddressingMode)(), IsByteOrWord ReturnType>
 static inline ReturnType AddressRead() {
     return MemoryAccess::Read<ReturnType>( AddressingMode() );
 }
 
 // Write 8/16 bit value to address given by AddressingMode()
-template<auto AddressingMode, IsByteOrWord WriteType>
-    requires std::is_same<std::invoke_result_t<decltype(AddressingMode)>, uint16_t>::value
+template<uint16_t(*AddressingMode)(), IsByteOrWord WriteType>
 static inline void AddressWrite( WriteType data ) {
     MemoryAccess::Write( AddressingMode(), data );
 }
@@ -381,14 +396,20 @@ static inline void AddressWrite( WriteType data ) {
 }
 
 // Read 8/16 bit value from address given by register word
-template<const uint16_t &reg, IsByteOrWord ReturnType>
+template<uint16_t &reg, IsByteOrWord ReturnType>
 static inline ReturnType AddressRead() {
     return MemoryAccess::Read<ReturnType>( reg );
 }
 
 // Write 8/16 bit value to address given by register word
-template<const uint16_t &reg, IsByteOrWord WriteType>
+template<uint16_t &reg, IsByteOrWord WriteType>
 static inline void AddressWrite( WriteType data ) {
+    MemoryAccess::Write( reg, data );
+}
+
+// Write 8/16 bit value to address given by register word
+template<uint16_t& reg, IsByteOrWord WriteType>
+static inline void AddressWrite2( WriteType data ) {
     MemoryAccess::Write( reg, data );
 }
 
@@ -454,7 +475,7 @@ enum class AddressingModeMnemonics {
     _HL,
     _IX,
     _IY,
-    _SP,
+    _SPtr,
     _n,
     _nn,
     _r,   // TODO - get actual mnemonic, might be 'l'
@@ -490,7 +511,7 @@ constexpr bool IsRegister16BitAddressingMode( AddressingModeMnemonics mnemonic )
         mnemonic == AddressingModeMnemonics::_HL ||
         mnemonic == AddressingModeMnemonics::_IX ||
         mnemonic == AddressingModeMnemonics::_IY ||
-        mnemonic == AddressingModeMnemonics::_SP;
+        mnemonic == AddressingModeMnemonics::_SPtr;
 }
 
 constexpr bool IsImmediateAddressingMode( AddressingModeMnemonics mnemonic ) {
@@ -529,8 +550,8 @@ constexpr ReadMode8BitRegister GetReadAddressingMode() {
     else if constexpr( mnemonic == AddressingModeMnemonics::_IXl ) { return AddressingModes::RegisterRead<IX, false>; }
     else if constexpr( mnemonic == AddressingModeMnemonics::_IYh ) { return AddressingModes::RegisterRead<IY, true>; }
     else if constexpr( mnemonic == AddressingModeMnemonics::_IYl ) { return AddressingModes::RegisterRead<IY, false>; }
-    else if constexpr( mnemonic == AddressingModeMnemonics::_SPh ) { return AddressingModes::RegisterRead<SP, true>; }
-    else if constexpr( mnemonic == AddressingModeMnemonics::_SPl ) { return AddressingModes::RegisterRead<SP, false>; }
+    else if constexpr( mnemonic == AddressingModeMnemonics::_SPh ) { return AddressingModes::RegisterRead<SPtr, true>; }
+    else if constexpr( mnemonic == AddressingModeMnemonics::_SPl ) { return AddressingModes::RegisterRead<SPtr, false>; }
     else {}
 }
 template <AddressingModeMnemonics mnemonic>
@@ -548,8 +569,8 @@ constexpr WriteMode8BitRegister GetWriteAddressingMode() {
     else if constexpr( mnemonic == AddressingModeMnemonics::_IXl ) { return AddressingModes::RegisterWrite<IX, false>; }
     else if constexpr( mnemonic == AddressingModeMnemonics::_IYh ) { return AddressingModes::RegisterWrite<IY, true>; }
     else if constexpr( mnemonic == AddressingModeMnemonics::_IYl ) { return AddressingModes::RegisterWrite<IY, false>; }
-    else if constexpr( mnemonic == AddressingModeMnemonics::_SPh ) { return AddressingModes::RegisterWrite<SP, true>; }
-    else if constexpr( mnemonic == AddressingModeMnemonics::_SPl ) { return AddressingModes::RegisterWrite<SP, false>; }
+    else if constexpr( mnemonic == AddressingModeMnemonics::_SPh ) { return AddressingModes::RegisterWrite<SPtr, true>; }
+    else if constexpr( mnemonic == AddressingModeMnemonics::_SPl ) { return AddressingModes::RegisterWrite<SPtr, false>; }
     else {}
 }
 
@@ -562,7 +583,7 @@ constexpr ReadMode16BitRegister GetAddressingMode2() {
     else if constexpr( mnemonic == AddressingModeMnemonics::_HL ) { return AddressingModes::RegisterRead<HL>; }
     else if constexpr( mnemonic == AddressingModeMnemonics::_IX ) { return AddressingModes::RegisterRead<IX>; }
     else if constexpr( mnemonic == AddressingModeMnemonics::_IY ) { return AddressingModes::RegisterRead<IY>; }
-    else if constexpr( mnemonic == AddressingModeMnemonics::_SP ) { return AddressingModes::RegisterRead<SP>; }
+    else if constexpr( mnemonic == AddressingModeMnemonics::_SPtr ) { return AddressingModes::RegisterRead<SPtr>; }
     else {}
 }
 template <AddressingModeMnemonics mnemonic>
@@ -574,7 +595,7 @@ constexpr WriteMode16BitRegister GetWriteAddressingMode2() {
     else if constexpr( mnemonic == AddressingModeMnemonics::_HL ) { return AddressingModes::RegisterWrite<HL>; }
     else if constexpr( mnemonic == AddressingModeMnemonics::_IX ) { return AddressingModes::RegisterWrite<IX>; }
     else if constexpr( mnemonic == AddressingModeMnemonics::_IY ) { return AddressingModes::RegisterWrite<IY>; }
-    else if constexpr( mnemonic == AddressingModeMnemonics::_SP ) { return AddressingModes::RegisterWrite<SP>; }
+    else if constexpr( mnemonic == AddressingModeMnemonics::_SPtr ) { return AddressingModes::RegisterWrite<SPtr>; }
     else {}
 }
 
@@ -628,12 +649,6 @@ static inline void Operation() {
     LDA_Op2<args...>();
 }
 
-static inline void test() {
-    //Operation<OpTypes::LDA, t::_A, t::_B>();
-    LDA_Op2< t::A, t::B >();
-}
-
-
 #pragma endregion
 
 /***********************************
@@ -680,7 +695,7 @@ static inline void OperationLD() {
 }
 
 static inline uint8_t POP8() {
-    return MemoryAccess::Read<uint8_t>( SP++ );
+    return MemoryAccess::Read<uint8_t>( SPtr++ );
 }
 static inline uint16_t POP16() {
     uint16_t value = POP8();
@@ -696,7 +711,7 @@ static inline void OperationPOP() {
 }
 
 static inline void PUSH8( uint8_t data ) {
-    MemoryAccess::Write( --SP, data );
+    MemoryAccess::Write( --SPtr, data );
 }
 static inline void PUSH16( uint16_t data ) {
     PUSH8( static_cast<uint8_t>( ( data >> 8 ) & 0x00FF ) );
@@ -1405,7 +1420,6 @@ static inline uint8_t RRD( uint8_t O1 ) {
 
     uint8_t accLowOrder = A.mainRegister.highByte() & 0x0F;
     uint8_t lowOrderMem = O1 & 0x0F;
-    uint8_t highOrderMem = O1 & 0xF0;
 
     result |= accLowOrder << 4;
     result |= lowOrderMem;
@@ -4347,7 +4361,7 @@ static inline void extendedOpIX() {
         }
         case 0x39:{
             // TODO - 39	ADD IX,SP
-            Operations::OperationADD<IX, SP>();
+            Operations::OperationADD<IX, SPtr>();
             break;
         }
         case 0x44:{
@@ -4672,7 +4686,7 @@ static inline void extendedOpIX() {
         }
         case 0xE3:{
             // TODO - E3	EX (SP),IX
-            Operations::OperationEX<AddressingModes::AddressWrite<SP, uint16_t>, AddressingModes::AddressRead<SP, uint16_t>, IX>();
+            Operations::OperationEX<AddressingModes::AddressWrite<SPtr, uint16_t>, AddressingModes::AddressRead<SPtr, uint16_t>, IX>();
             break;
         }
         case 0xE5:{
@@ -4687,7 +4701,7 @@ static inline void extendedOpIX() {
         }
         case 0xF9:{
             // TODO - F9	LD SP,IX
-            Operations::OperationLD<SP, IX>();
+            Operations::OperationLD<SPtr, IX>();
             break;
         }
     }
@@ -4793,7 +4807,7 @@ static inline void extendedOpEXTD() {
         }
         case 0x53:{
             // TODO - LD (nn),DE
-            OperationBase<Operations::LD8, AddressingModes::AddressWrite<AddressingModes::ImmediateExtended, uint16_t>, AddressingModes::RegisterRead<DE>>();
+            OperationBase<Operations::LD16, AddressingModes::AddressWrite<AddressingModes::ImmediateExtended, uint16_t>, AddressingModes::RegisterRead<DE>>();
             break;
         }
         case 0x54:{
@@ -4948,12 +4962,12 @@ static inline void extendedOpEXTD() {
         }
         case 0x72:{
             // TODO - SBC HL,SP
-            OperationBase<Operations::SBC16, AddressingModes::RegisterWrite<HL>, AddressingModes::RegisterRead<HL>, AddressingModes::RegisterRead<SP>>();
+            OperationBase<Operations::SBC16, AddressingModes::RegisterWrite<HL>, AddressingModes::RegisterRead<HL>, AddressingModes::RegisterRead<SPtr>>();
             break;
         }
         case 0x73:{
             // TODO - LD (nn),SP	
-            OperationBase<Operations::LD16, AddressingModes::AddressWrite<AddressingModes::ImmediateExtended, uint16_t>, AddressingModes::RegisterRead<SP>>();	
+            OperationBase<Operations::LD16, AddressingModes::AddressWrite<AddressingModes::ImmediateExtended, uint16_t>, AddressingModes::RegisterRead<SPtr>>();
             break;
         }
         case 0x74:{
@@ -4983,12 +4997,12 @@ static inline void extendedOpEXTD() {
         }
         case 0x7A:{
             // TODO - ADC HL,SP
-            OperationBase<Operations::ADC16, AddressingModes::RegisterWrite<HL>, AddressingModes::RegisterRead<HL>, AddressingModes::RegisterRead<SP>>();
+            OperationBase<Operations::ADC16, AddressingModes::RegisterWrite<HL>, AddressingModes::RegisterRead<HL>, AddressingModes::RegisterRead<SPtr>>();
             break;
         }
         case 0x7B:{
             // TODO - LD SP,(nn);
-            OperationBase<Operations::LD16, AddressingModes::RegisterWrite<SP>, AddressingModes::AddressRead<AddressingModes::ImmediateExtended, uint16_t>>();
+            OperationBase<Operations::LD16, AddressingModes::RegisterWrite<SPtr>, AddressingModes::AddressRead<AddressingModes::ImmediateExtended, uint16_t>>();
             break;
         }
         case 0x7C:{
@@ -6372,7 +6386,6 @@ static inline void extendedOpIYBITS() {
         }
         case 0xFF:{
             // TODO - LD A,SET 7,(IY+d)
-            auto a = AddressingModes::AddressRead<AddressingModes::IndexedIYAddress, uint8_t>();
             Operations::OperationSET<7, AddressingModes::RegisterWrite<A, true>, AddressingModes::AddressWrite<AddressingModes::IndexedIYAddress, uint8_t>, AddressingModes::AddressRead<AddressingModes::IndexedIYAddress, uint8_t>>();
             break;
         }
@@ -6469,7 +6482,7 @@ static inline void extendedOpIY() {
         }
         case 0x39:{
             // TODO - 39	ADD IY,SP
-            Operations::OperationADD<IY, SP>();
+            Operations::OperationADD<IY, SPtr>();
             break;
         }
         case 0x44:{
@@ -6794,7 +6807,7 @@ static inline void extendedOpIY() {
         }
         case 0xE3:{
             // TODO - E3	EX (SP),IY
-            Operations::OperationEX<AddressingModes::AddressWrite<SP, uint16_t>, AddressingModes::AddressRead<SP, uint16_t>, IY>();
+            Operations::OperationEX<AddressingModes::AddressWrite<SPtr, uint16_t>, AddressingModes::AddressRead<SPtr, uint16_t>, IY>();
             break;
         }
         case 0xE5:{
@@ -6809,7 +6822,7 @@ static inline void extendedOpIY() {
         }
         case 0xF9:{
             // TODO - F9	LD SP,IY
-            Operations::OperationLD<SP, IY>();
+            Operations::OperationLD<SPtr, IY>();
             break;
         }
     }
@@ -7065,7 +7078,7 @@ static inline void operationTick() {
         }
         case 0x31:{
             //TODO - 31 n n,LD SP,nn,10,3,1
-            OperationBase<Operations::LD16, AddressingModes::RegisterWrite<SP>, AddressingModes::ImmediateExtended>();
+            OperationBase<Operations::LD16, AddressingModes::RegisterWrite<SPtr>, AddressingModes::ImmediateExtended>();
             break;
         }
         case 0x32:{
@@ -7075,7 +7088,7 @@ static inline void operationTick() {
         }
         case 0x33:{
             //TODO - 33,INC SP,6,1,1
-            OperationBase<Operations::INC16, AddressingModes::RegisterWrite<SP>, AddressingModes::RegisterRead<SP>>();
+            OperationBase<Operations::INC16, AddressingModes::RegisterWrite<SPtr>, AddressingModes::RegisterRead<SPtr>>();
             break;
         }
         case 0x34:{
@@ -7105,7 +7118,7 @@ static inline void operationTick() {
         }
         case 0x39:{
             //TODO - 39,ADD HL,SP,11,3,1
-            OperationBase<Operations::ADD16, AddressingModes::RegisterWrite<HL>, AddressingModes::RegisterRead<HL>, AddressingModes::RegisterRead<SP>>();
+            OperationBase<Operations::ADD16, AddressingModes::RegisterWrite<HL>, AddressingModes::RegisterRead<HL>, AddressingModes::RegisterRead<SPtr>>();
             break;
         }
         case 0x3A:{
@@ -7115,7 +7128,7 @@ static inline void operationTick() {
         }
         case 0x3B:{
             //TODO - 3B,DEC SP,6,1,1
-            OperationBase<Operations::DEC16, AddressingModes::RegisterWrite<SP>, AddressingModes::RegisterRead<SP>>();
+            OperationBase<Operations::DEC16, AddressingModes::RegisterWrite<SPtr>, AddressingModes::RegisterRead<SPtr>>();
             break;
         }
         case 0x3C:{
@@ -7954,7 +7967,7 @@ static inline void operationTick() {
         }
         case 0xE3:{
             //TODO - E3,EX (SP),HL
-            OperationBase<Operations::EX_mem<HL>, AddressingModes::AddressWrite<SP, uint8_t>, AddressingModes::AddressRead<SP, uint8_t>>();
+            OperationBase<Operations::EX_mem<HL>, AddressingModes::AddressWrite<SPtr, uint16_t>, AddressingModes::AddressRead<SPtr, uint16_t>>();
             break;
         }
         case 0xE4:{
@@ -8063,7 +8076,7 @@ static inline void operationTick() {
         }
         case 0xF9:{
             //TODO - F9,LD SP,HL
-            OperationBase<Operations::LD16, AddressingModes::RegisterWrite<SP>, AddressingModes::RegisterRead<HL>>();
+            OperationBase<Operations::LD16, AddressingModes::RegisterWrite<SPtr>, AddressingModes::RegisterRead<HL>>();
             break;
         }
         case 0xFA:{
@@ -8105,7 +8118,7 @@ static inline void debugPrintState() {
     std::cout << std::setfill( '0' ) << std::setw( 4 )
         << ++opCount
         << " PC:" << std::setfill( '0' ) << std::setw( 4 ) << std::hex << PC
-        << " SP: " << std::setfill( '0' ) << std::setw( 4 ) << std::hex << SP
+        << " SP: " << std::setfill( '0' ) << std::setw( 4 ) << std::hex << SPtr
         << " IX: " << std::setfill( '0' ) << std::setw( 4 ) << std::hex << IX
         << " IY: " << std::setfill( '0' ) << std::setw( 4 ) << std::hex << IY
         << " I: " << std::setfill( '0' ) << std::setw( 4 ) << std::hex << I
@@ -8124,8 +8137,7 @@ static inline void debugPrintState() {
 }
 
 void z80Tick() {
-    debugPrintState();
-    test();
+    //debugPrintState();
     nextPC = PC;
     operationTick();
     PC = nextPC;

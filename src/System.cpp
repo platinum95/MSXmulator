@@ -87,6 +87,7 @@ struct PPI {
             case 0x03: return SlotDSelect;
         }
         assert( false );
+        return 255;
     }
 
 private:
@@ -239,14 +240,14 @@ void IOAccess( uint16_t addressBus, uint8_t &dataBus, bool writeLine ) {
     }
     else if ( IOAddress <= 0x99 ) {
         // VDP
-        VDP::PortAccess( addressBus - 0x98, dataBus, writeLine );
+        VDP::PortAccess( static_cast<uint8_t>( addressBus - 0x98 ), dataBus, writeLine );
     }
     else if ( IOAddress < 0xA0 ) {
         // TODO - ?
     }
     else if ( IOAddress <= 0xA2 ) {
         // PSG
-        PsgPortAccess( addressBus - 0xA0, dataBus, writeLine );
+        PsgPortAccess( static_cast<uint8_t>( addressBus - 0xA0 ), dataBus, writeLine );
     }
     else if ( IOAddress < 0xA8 ) {
         // TODO - ?
