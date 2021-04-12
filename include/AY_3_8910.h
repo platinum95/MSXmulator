@@ -1,3 +1,7 @@
 #include <stdint.h>
 
-void PsgPortAccess( uint8_t port, uint8_t &dataBus, bool writeLine );
+namespace PSG {
+    void Tick();
+    void Reset();
+    void PortAccess( uint8_t port, uint8_t &dataBus, bool writeLine );
+}

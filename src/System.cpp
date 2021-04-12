@@ -1,7 +1,10 @@
 #include "System.h"
 
 #include "AY_3_8910.h"
+#include "Cartridge.h"
+#include "Input.h"
 #include "TMS9918A.h"
+#include "z80Core.h"
 
 #include <array>
 #include <assert.h>
@@ -42,8 +45,7 @@ struct PPI {
             case 0x01: {
                 // Reg B - KB Matrix row-in
                 assert( !writeLine );
-                // TODO
-                data = 0;
+                data = Input::GetRow( KBScan );
                 break;
             }
             case 0x02: {
@@ -63,6 +65,7 @@ struct PPI {
                 assert( writeLine );
                 if ( data & 0x80 ) {
                     // TODO
+                    std::cout << "PPI Command-write 0x80\n";
                 }
                 else {
                     const uint8_t bitMask = 1u << ( ( data >> 1 ) & 0x07 );
@@ -103,6 +106,8 @@ private:
 static PPI ppi;
 static uint8_t ROM[ 0x8000 ];
 static uint8_t RAM[ 0x10000 ];
+static Cartridge CartA;
+static Cartridge CartB;
 
 void Initialise( std::filesystem::path romPath ){
     std::ifstream input( romPath, std::ios::binary | std::ios::in | std::ios::ate );
@@ -111,8 +116,20 @@ void Initialise( std::filesystem::path romPath ){
     input.seekg( std::ios::beg );
     input.read( (char*)ROM, size );
     input.close();
+
+    CartA.loadCartridge( "nemesis.rom" );
+    VDP::Reset();
+    Input::Initialise();
+    PSG::Reset();
 }
 
+void IRQ( bool level ) {
+    Z80::IRQ( level );
+}
+
+void BlorpyBlorp() {
+    VDP::Blorp();
+}
 void SlotAccess( uint8_t slot, uint16_t addressBus, uint8_t &dataBus, bool writeLine ) {
     const uint8_t slotSelect = ppi.GetActiveSlotSelect( slot );
     
@@ -137,7 +154,7 @@ void SlotAccess( uint8_t slot, uint16_t addressBus, uint8_t &dataBus, bool write
             break;
         }
         case 0x01: {
-            // TODO - 64kb RAM
+            // 64kb RAM
             if ( writeLine ) {
                 RAM[ addressBus ] = dataBus;
             }
@@ -147,14 +164,11 @@ void SlotAccess( uint8_t slot, uint16_t addressBus, uint8_t &dataBus, bool write
             break;
         }
         case 0x02: {
-            // TODO - Cartridge 1
-            std::cout << "TODO - Cartridge 1\n";
+            CartA.memoryAccess( addressBus, dataBus, writeLine );
             break;
         }
         case 0x03: {
-            // TODO - Cartridge 2
-            std::cout << "TODO - Cartridge 2\n";
-            dataBus = 0x00;
+            CartB.memoryAccess( addressBus, dataBus, writeLine );
             break;
         }
     }
@@ -180,13 +194,12 @@ void SecondarySlotSelect( uint8_t &dataBus, bool writeLine ) {
         }
         case 0x02: {
             // Cartridge 1 - Not expanded for now
-            std::cout << "TODO - Cartridge 1\n";
+            CartA.memoryAccess( 0xFFFF, dataBus, writeLine );
             break;
         }
         case 0x03: {
             // Cartridge 2 - Not expanded for now
-            std::cout << "TODO - Cartridge 2\n";
-            dataBus = 0x00;
+            CartB.memoryAccess( 0xFFFF, dataBus, writeLine );
             break;
         }
     }
@@ -234,6 +247,7 @@ void IOAccess( uint16_t addressBus, uint8_t &dataBus, bool writeLine ) {
     }
     else if ( IOAddress <= 0x91 ) {
         // TODO - Printer port
+        std::cout << "TODO - Printer port\n";
     }
     else if ( IOAddress < 0x98 ) {
         // TODO - ?
@@ -247,7 +261,7 @@ void IOAccess( uint16_t addressBus, uint8_t &dataBus, bool writeLine ) {
     }
     else if ( IOAddress <= 0xA2 ) {
         // PSG
-        PsgPortAccess( static_cast<uint8_t>( addressBus - 0xA0 ), dataBus, writeLine );
+        PSG::PortAccess( static_cast<uint8_t>( addressBus - 0xA0 ), dataBus, writeLine );
     }
     else if ( IOAddress < 0xA8 ) {
         // TODO - ?
@@ -260,6 +274,7 @@ void IOAccess( uint16_t addressBus, uint8_t &dataBus, bool writeLine ) {
     }
     else if ( IOAddress == 0xB4 ) {
         // TODO - Calendar clock
+        std::cout << "TODO - Calendar clock\n";
     }
     else if ( IOAddress < 0xB8 ) {
         // TODO - ?
@@ -289,6 +304,7 @@ void IOAccess( uint16_t addressBus, uint8_t &dataBus, bool writeLine ) {
     }
     else {
         // TODO - Memory Mapping control?
+        std::cout << "TODO - ?\n";
     }
 
 }

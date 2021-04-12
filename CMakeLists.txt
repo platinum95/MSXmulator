@@ -14,10 +14,22 @@ if(MSVC)
 else()
   add_compile_options( -Wno-unknown-pragmas -MMD -O0 -g -Wall -Werror -Wextra -Wformat=2 -Wshadow -pedantic -Werror=vla -march=native -Wno-unused-variable )
   add_link_options( -Wno-unknown-pragmas -MMD -O0 -g -Wall -Werror -Wextra -Wformat=2 -Wshadow -pedantic -Werror=vla -march=native -Wno-unused-variable )
+  
+  set(THREADS_PREFER_PTHREAD_FLAG ON)
+
+  find_package(X11 REQUIRED)
+  link_libraries(${X11_LIBRARIES} pthread)
+  include_directories(${X11_INCLUDE_DIR})
+
 endif()
+
+find_package(Threads REQUIRED)
+find_package(portaudio REQUIRED)
 
 include_directories( "include" )
 
 file( GLOB_RECURSE SRC "src/*.cpp" )
+list( APPEND SRC "src/gfx.c" )
 
 add_executable ( msxmulator ${SRC} )
+target_link_libraries( msxmulator portaudio_static Threads::Threads )
