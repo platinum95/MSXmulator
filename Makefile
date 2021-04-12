@@ -1,7 +1,9 @@
 CPP		    = g++
+CC		    = gcc
 INCLUDES    = -I$(PWD)/include
 CFLAGS	    = $(INCLUDES) -std=c++20 -Wno-unknown-pragmas -MMD -O0 -g -Wall -Werror -Wextra -Wformat=2 -Wshadow -pedantic -Werror=vla -march=native -Wno-unused-variable
-LIBS		=
+C2FLAGS	    = $(INCLUDES) -Wno-unknown-pragmas -MMD -O3 -g
+LIBS		= -lX11 -lpthread -lportaudio
 
 #-fconcepts-diagnostics-depth=5
 
@@ -28,7 +30,7 @@ TOOLS_BIN   = $(patsubst $(OBJ_DIR)/%.o,$(ROOT_DIR)/%,$(TOOLS_OBJ))
 
 all: msxmulator
 
-msxmulator: $(OBJ) $(OBJ)
+msxmulator: $(OBJ_DIR)/gfx.o $(OBJ) $(OBJ) 
 	$(CPP) -o $@ $^ $(CFLAGS) $(LIBS)
 
 tests: $(OBJ) $(TESTS_OBJ) $(TEST_OBJ) $(CMORE_STATIC_LIB) | $(SHADERS_OBJ)
@@ -40,6 +42,9 @@ make_func_list:
 .PHONY: tools
 tools: | $(OBJ) $(CMORE_STATIC_LIB)
 	$(MAKE) -C $(TOOLS_DIR) OBJ_DIR=$(OBJ_DIR)
+
+$(OBJ_DIR)/gfx.o: $(SRC_DIR)/gfx.c
+	$(CC) -c -o $@ $< $(C2FLAGS)
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CPP) -c -o $@ $< $(CFLAGS)
