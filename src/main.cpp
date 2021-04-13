@@ -25,7 +25,7 @@ int main( int argc, char** argv ) {
         static uint8_t PSGCLKDiv = 0;
         //auto clockStartTime = std::chrono::high_resolution_clock::now();
         //auto clockEndTime = std::chrono::high_resolution_clock::now() - clockPeriod;
-        auto cpuClock = std::clock();
+        //auto cpuClock = std::clock();
         CLOCKS_PER_SEC;
         
         if ( ++PixelClockDiv == 1 ) {

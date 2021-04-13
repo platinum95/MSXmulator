@@ -1,9 +1,6 @@
 #include "Input.h"
 
 #include <assert.h>
-extern "C" {
-#include "gfx.h"
-}
 
 #include <assert.h>
 #include <chrono>
@@ -124,7 +121,7 @@ static RowBitValues MapKeycodeToMatrix( uint16_t keyCode ) {
     }
 } 
 
-static void UpdateKeyState( uint16_t keyCode, bool pressed ) {
+static inline void UpdateKeyState( uint16_t keyCode, bool pressed ) {
     RowBitValues keyPos = MapKeycodeToMatrix( keyCode );
     if ( pressed ) {
         rowValues[ keyPos.row ] &= ~keyPos.bitmask;
@@ -137,16 +134,16 @@ static void UpdateKeyState( uint16_t keyCode, bool pressed ) {
 static void InputLoop() {
     memset( rowValues, 0xFF, 11 );
 
-    while( 1 ) {
-        uint16_t keyCode;
-        bool keyPressed;
-        gfx_lock();
-        while( gfx_KeyEvent( &keyCode, &keyPressed ) ) {
-            UpdateKeyState( keyCode, keyPressed );
-        }
-        gfx_unlock();
-        std::this_thread::sleep_for( std::chrono::microseconds( 500 ) );
-    }
+    //while( 1 ) {
+    //    uint16_t keyCode;
+     //   bool keyPressed;
+        //gfx_lock();
+        //while( gfx_KeyEvent( &keyCode, &keyPressed ) ) {
+        //    UpdateKeyState( keyCode, keyPressed );
+        //}
+        //gfx_unlock();
+      //  std::this_thread::sleep_for( std::chrono::microseconds( 500 ) );
+    //}
 }
 void Input::Initialise() {
     InputThread = std::thread( InputLoop );

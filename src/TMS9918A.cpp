@@ -1,9 +1,7 @@
 #include "TMS9918A.h"
-#include "System.h"
 
-extern "C" {
-#include "gfx.h"
-}
+#include "GraphicalInterface.h"
+#include "System.h"
 
 #include <assert.h>
 #include <iostream>
@@ -48,21 +46,21 @@ enum class ScanState {
 static bool regAddrWriteReady = true; // Initial state
 static uint8_t regAddrWriteLatch;
 struct State {
-    uint8_t mode;
-    uint16_t nameTableAddress;
-    uint16_t colourTableAddress;
-    uint16_t colourTableBaseAddressMode2;
-    uint16_t patternTableAddress;
-    uint16_t patternTableBaseAddressMode2;
-    uint16_t spriteAttribTableAddress;
-    uint16_t spritePatternTableAddress;
-    uint8_t colour1;
-    uint8_t colour0;
-    uint32_t xPos = 0;
-    uint32_t yPos = 0;
+    uint8_t     mode{ 0 };
+    uint16_t    nameTableAddress{ 0 };
+    uint16_t    colourTableAddress{ 0 };
+    uint16_t    colourTableBaseAddressMode2{ 0 };
+    uint16_t    patternTableAddress{ 0 };
+    uint16_t    patternTableBaseAddressMode2{ 0 };
+    uint16_t    spriteAttribTableAddress{ 0 };
+    uint16_t    spritePatternTableAddress{ 0 };
+    uint8_t     colour1{ 0 };
+    uint8_t     colour0{ 0 };
+    uint32_t    xPos{ 0 };
+    uint32_t    yPos{ 0 };
 
-    ScanState horizontalScanState;
-    ScanState verticalScanState;
+    ScanState horizontalScanState{ ScanState::FrontBorder };
+    ScanState verticalScanState{ ScanState::FrontBorder };
 };
 static State state;
 
@@ -83,102 +81,12 @@ static State state;
 #define V_BORDER_BOTTOM_BOUNDARY V_BLANK_BOUNDARY - 24
 #define V_BORDER_TOP_BOUNDARY 27
 
-void VDP::Blorp() {
-    strcpy( (char*)VRAM, "Hello world" );
-}
-
 void VDP::Reset() {
     state = {};
     portRegisters = {};
 
     // Set up temp gfx lib
-    gfx_open( H_BLANK_BOUNDARY, V_BLANK_BOUNDARY, "MSXmulator" );
-}
-
-static void SetGfxColour( uint8_t colour ) {
-    assert( colour < 0x10 );
-    switch( colour ) {
-        case 0x0:{
-            // transparent
-            gfx_color(0,0,0);
-            break;
-        }
-        case 0x1:{
-            // black
-            gfx_color(1,1,1);
-            break;
-        }
-        case 0x2:{
-            // medium green
-            gfx_color(62,184,73);
-            break;
-        }
-        case 0x3:{
-            // light green
-            gfx_color(116,208,125);
-            break;
-        }
-        case 0x4:{
-            // dark blue
-            gfx_color(89,85,224);
-            break;
-        }
-        case 0x5:{
-            // light blue
-            gfx_color(128,118,241);
-            break;
-        }
-        case 0x6:{
-            // dark red
-            gfx_color(185,94,81);
-            break;
-        }
-        case 0x7:{
-            // cyan
-            gfx_color(101,219,239);
-            break;
-        }
-        case 0x8:{
-            // medium red
-            gfx_color(219,101,89);
-            break;
-        }
-        case 0x9:{
-            // light red
-            gfx_color(255,137,125);
-            break;
-        }
-        case 0x0A:{
-            // dark yellow
-            gfx_color(204,195,94);
-            break;
-        }
-        case 0x0B:{
-            // light yellow
-            gfx_color(222,208,135);
-            break;
-        }
-        case 0x0C:{
-            // dark green
-            gfx_color(58,162,65);
-            break;
-        }
-        case 0x0D:{
-            // magenta
-            gfx_color(183,102,181);
-            break;
-        }
-        case 0x0E:{
-            // gray
-            gfx_color(204,204,204);
-            break;
-        }
-        case 0x0F:{
-            // white
-            gfx_color(255,255,255);
-            break;
-        }
-    }
+    GraphicalInterface::Initialise( H_BLANK_BOUNDARY, V_BLANK_BOUNDARY );
 }
 
 static void IncrementPixelPosition() {
@@ -193,6 +101,7 @@ static void IncrementPixelPosition() {
             state.yPos = 0;
             Status &= ~StatusFlags::Interrupt;
             System::IRQ( true );
+            GraphicalInterface::OutputFrame();
         }
     }
 }
@@ -213,18 +122,18 @@ void VDP::Tick() {
     uint8_t pixelColour = portRegisters.R7_ColorCode & 0x0F;
 
     if ( InActivePortion() ) {
-        const uint8_t adjustedYPos = state.yPos - V_BORDER_TOP_BOUNDARY;
-        const uint8_t adjustedXPos = state.xPos - H_BORDER_LEFT;
+        const uint8_t adjustedYPos = static_cast<uint8_t>( state.yPos - V_BORDER_TOP_BOUNDARY );
+        const uint8_t adjustedXPos = static_cast<uint8_t>( state.xPos - H_BORDER_LEFT );
         if ( state.mode == 0x04 ) {
             // Text mode
-            const uint8_t adjustedXTextPos = state.xPos - H_BORDER_LEFT_TEXT;
-            const uint8_t currentXCharIdx = adjustedXTextPos / 6;
+            const uint8_t adjustedXTextPos = static_cast<uint8_t>( state.xPos - H_BORDER_LEFT_TEXT );
+            const uint8_t currentXCharIdx = static_cast<uint8_t>( adjustedXTextPos / 6 );
             const uint8_t currentYCharIdx = adjustedYPos / 8;
             const uint16_t currentCharIdx = ( currentYCharIdx * 40 ) + currentXCharIdx;
-            
+
             const uint8_t patternSelect = VRAM[ state.nameTableAddress + currentCharIdx ];
 
-            const uint16_t patternOffset = state.patternTableAddress + ( patternSelect * 8 * sizeof(uint8_t) );
+            const uint16_t patternOffset = state.patternTableAddress + ( static_cast<uint64_t>( static_cast<uint64_t>( patternSelect ) * 8 ) * sizeof(uint8_t) );
             const uint8_t currentRow = adjustedYPos % 8;
 
             const uint8_t rowData = VRAM[ patternOffset + currentRow ];
@@ -241,7 +150,7 @@ void VDP::Tick() {
             const uint16_t currentBlockIdx = ( currentYBlockIdx * 32 ) + currentXBlockIdx;
             const uint8_t patternSelect = VRAM[ state.nameTableAddress + currentBlockIdx ];
 
-            const uint16_t patternOffset = state.patternTableAddress + ( patternSelect * 8 * sizeof(uint8_t) );
+            const uint16_t patternOffset = state.patternTableAddress + ( static_cast<uint64_t>( patternSelect ) * 8 * sizeof(uint8_t) );
             const uint8_t colourOffset = ( patternSelect >> 3 ) & 0x1F;
 
             const uint8_t colourData = VRAM[ state.colourTableAddress + colourOffset ];
@@ -260,16 +169,16 @@ void VDP::Tick() {
             const uint8_t currentYBlockIdx = adjustedYPos / 8;
             const uint16_t currentBlockIdx = ( currentYBlockIdx * 32 ) + currentXBlockIdx;
             
-            const uint8_t patternTableSelect = currentBlockIdx / 256;
+            const uint8_t patternTableSelect = static_cast<uint8_t>( currentBlockIdx / 256 );
             assert( patternTableSelect < 3 );
 
-            const uint8_t patternSelect = VRAM[ state.nameTableAddress + ( patternTableSelect * 256 * sizeof(uint8_t) ) + ( currentBlockIdx % 256 ) ];
+            const uint8_t patternSelect = VRAM[ state.nameTableAddress + ( static_cast<uint64_t>( patternTableSelect ) * 256 * sizeof(uint8_t) ) + ( currentBlockIdx % 256 ) ];
 
             const uint8_t currentRow = adjustedYPos % 8;
 
             const uint16_t patternAndColourOffset = 
                 ( patternTableSelect * 2048 * sizeof(uint8_t) ) +
-                ( patternSelect * 8 * sizeof(uint8_t) ) 
+                ( static_cast<uint64_t>( patternSelect ) * 8 * sizeof(uint8_t) )
                 + currentRow;
             
             const uint8_t rowData = VRAM[ state.patternTableBaseAddressMode2 + patternAndColourOffset ];
@@ -302,8 +211,8 @@ void VDP::Tick() {
 
             const uint16_t colourOffset = 
                 state.patternTableAddress +
-                ( patternSelect * 8 * sizeof(uint8_t) ) 
-                + ( currentPatternRow * 2 )
+                ( static_cast<uint64_t>( patternSelect ) * 8 * sizeof(uint8_t) ) 
+                + ( static_cast<uint64_t>( currentPatternRow ) * 2 )
                 + currentGroupRow;
             
             const uint8_t colourData = VRAM[ colourOffset ];
@@ -323,17 +232,13 @@ void VDP::Tick() {
             const uint8_t vPos = spriteAttributes[ 0 ];
             if ( vPos == 208 ) {
                 if ( spriteId > 0 ) {
-                    int i = 0;
+                    //int i = 0;
                 }
                 break;
             }
         }
+        GraphicalInterface::SetPixel( state.xPos, state.yPos, static_cast<GraphicalInterface::Colour>( pixelColour ) );
     }
-
-    gfx_lock();
-    SetGfxColour( pixelColour );
-    gfx_point( state.xPos, state.yPos );
-    gfx_unlock();
 }
 
 static inline void PortRegisterWrite( uint8_t registerSelect ) {

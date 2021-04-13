@@ -29,28 +29,29 @@ struct ChannelState {
         noisePeriodCounter = channelStateRhs.noisePeriodCounter;
         noiseLevel = channelStateRhs.noiseLevel;
     }
-    bool envelopEnable;
-    uint8_t amplitude;
 
-    bool toneEnable;
-    uint16_t toneHalfPeriodDivisor;
-    uint16_t tonePeriodCounter;
-    bool toneHigh;
-    std::atomic<uint8_t> toneLevel{ 0 };
+    bool                    envelopEnable{ false };
+    uint8_t                 amplitude{ 0u };
 
-    bool noiseEnable;
-    uint16_t noiseHalfPeriodDivisor;
-    uint16_t noisePeriodCounter;
-    bool noiseLevel;
+    bool                    toneEnable{ false };
+    uint16_t                toneHalfPeriodDivisor{ 0u };
+    uint16_t                tonePeriodCounter{ 0u };
+    bool                    toneHigh{ false };
+    std::atomic<uint8_t>    toneLevel{ 0 };
+
+    bool                    noiseEnable{ false };
+    uint16_t                noiseHalfPeriodDivisor{ 0u };
+    uint16_t                noisePeriodCounter{ 0u };
+    bool                    noiseLevel{ false };
 };
 
 struct State {
-    uint8_t mainToneTickCounter;
-    uint8_t envelopeTickCounter;
+    uint8_t                     mainToneTickCounter{ 0 };
+    uint8_t                     envelopeTickCounter{ 0 };
 
-    uint16_t envelopePeriodCounter;
-    uint16_t envelopePeriod;
-    uint8_t envelopeValue;
+    uint16_t                    envelopePeriodCounter{ 0 };
+    uint16_t                    envelopePeriod{ 0 };
+    uint8_t                     envelopeValue{ 0 };
     std::array<ChannelState, 3> channelStates;
 };
 
@@ -74,10 +75,10 @@ static void envelopeTick() {
         case 0x03: 
         case 0x09: {
             if ( state.envelopePeriodCounter > state.envelopePeriod ) {
-                state.envelopeValue = 0x00;
+                state.envelopeValue = static_cast<uint8_t>( 0x00 );
             }
             else {
-                state.envelopeValue = 0x0F - ( ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod );
+                state.envelopeValue = static_cast<uint8_t>( 0x0F - ( ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod ) );
             }
             break;
         }
@@ -93,55 +94,55 @@ static void envelopeTick() {
         case 0x07:
         case 0x0F: {
             if ( state.envelopePeriodCounter > state.envelopePeriod ) {
-                state.envelopeValue = 0x00;
+                state.envelopeValue = static_cast<uint8_t>( 0x00 );
             }
             else {
-                state.envelopeValue = ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod;
+                state.envelopeValue = static_cast<uint8_t>( ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod );
             }
             break;
         }
         case 0x0B:{
             if ( state.envelopePeriodCounter > state.envelopePeriod ) {
-                state.envelopeValue = 0x0F;
+                state.envelopeValue = static_cast<uint8_t>( 0x0F );
             }
             else {
-                state.envelopeValue = 0x0F - ( ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod );
+                state.envelopeValue = static_cast<uint8_t>( 0x0F - ( ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod ) );
             }
             break;
         }
         case 0x0D: {
             if ( state.envelopePeriodCounter > state.envelopePeriod ) {
-                state.envelopeValue = 0x0F;
+                state.envelopeValue = static_cast<uint8_t>( 0x0F );
             }
             else {
-                state.envelopeValue = ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod;
+                state.envelopeValue = static_cast<uint8_t>( ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod );
             }
             break;
         }
         case 0x0A: {
             if ( state.envelopePeriodCounter < state.envelopePeriod ) {
-                state.envelopeValue = 0x0F - ( ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod );
+                state.envelopeValue = static_cast<uint8_t>( 0x0F - ( ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod ) );
             }
             else if ( state.envelopePeriodCounter < state.envelopePeriod * 2 ) {
-                state.envelopeValue = ( 0x0F * ( state.envelopePeriodCounter / 2 ) ) / state.envelopePeriod;
+                state.envelopeValue = static_cast<uint8_t>( ( 0x0F * ( state.envelopePeriodCounter / 2 ) ) / state.envelopePeriod );
             }
             else {
                 state.envelopePeriodCounter = 0;
             }
-            state.envelopeValue = 0x0F;
+            state.envelopeValue = static_cast<uint8_t>( 0x0F );
             break;
         }
         case 0x0E: {
             if ( state.envelopePeriodCounter < state.envelopePeriod ) {
-                state.envelopeValue = ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod;
+                state.envelopeValue = static_cast<uint8_t>( ( 0x0F * state.envelopePeriodCounter ) / state.envelopePeriod );
             }
             else if ( state.envelopePeriodCounter < state.envelopePeriod * 2 ) {
-                state.envelopeValue = 0x0F - ( ( 0x0F * ( state.envelopePeriodCounter / 2 ) ) / state.envelopePeriod );
+                state.envelopeValue = static_cast<uint8_t>( 0x0F - ( ( 0x0F * ( state.envelopePeriodCounter / 2 ) ) / state.envelopePeriod ) );
             }
             else {
                 state.envelopePeriodCounter = 0;
             }
-            state.envelopeValue = 0x0F;
+            state.envelopeValue = static_cast<uint8_t>( 0x0F );
             break;
         }
     }

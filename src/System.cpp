@@ -14,17 +14,17 @@
 
 namespace System {
 struct PPI {
-    uint8_t RegA;
+    uint8_t RegA{ 0x00 };
     uint8_t SlotASelect{ 0x00 };
     uint8_t SlotBSelect{ 0x00 };
     uint8_t SlotCSelect{ 0x00 };
     uint8_t SlotDSelect{ 0x00 };
-    uint8_t RegC;
-    uint8_t KBScan;
-    bool cassetteControl;
-    bool cassetteWrite;
-    bool capsEnable;
-    bool soundEnable;
+    uint8_t RegC{ 0x00 };
+    uint8_t KBScan{ 0x00 };
+    bool cassetteControl{ false };
+    bool cassetteWrite{ false };
+    bool capsEnable{ false };
+    bool soundEnable{ false };
 
     inline void PPIAccess( uint8_t port, uint8_t &data, bool writeLine ) {
         switch( port ) {
@@ -121,15 +121,13 @@ void Initialise( std::filesystem::path romPath ){
     VDP::Reset();
     Input::Initialise();
     PSG::Reset();
+
 }
 
 void IRQ( bool level ) {
     Z80::IRQ( level );
 }
 
-void BlorpyBlorp() {
-    VDP::Blorp();
-}
 void SlotAccess( uint8_t slot, uint16_t addressBus, uint8_t &dataBus, bool writeLine ) {
     const uint8_t slotSelect = ppi.GetActiveSlotSelect( slot );
     

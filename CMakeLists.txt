@@ -23,13 +23,15 @@ else()
 
 endif()
 
+add_definitions( -DUSE_GL_INTERFACE )
 find_package(Threads REQUIRED)
 find_package(portaudio REQUIRED)
+find_package(glfw3 3.3 REQUIRED)
 
 include_directories( "include" )
 
 file( GLOB_RECURSE SRC "src/*.cpp" )
-list( APPEND SRC "src/gfx.c" )
+#list( APPEND SRC "src/gfx.c" )
 
 add_executable ( msxmulator ${SRC} )
-target_link_libraries( msxmulator portaudio_static Threads::Threads )
+target_link_libraries( msxmulator portaudio_static Threads::Threads glfw )
