@@ -72,7 +72,6 @@ static State state;
 #define H_MAX 300
 #define V_MAX 340
 
-
 #define H_BORDER_LEFT_TEXT 19
 #define H_BORDER_RIGHT_TEXT H_BLANK_BOUNDARY - 25
 #define H_BORDER_LEFT 13
@@ -237,7 +236,7 @@ void VDP::Tick() {
                 break;
             }
         }
-        GraphicalInterface::SetPixel( state.xPos, state.yPos, static_cast<GraphicalInterface::Colour>( pixelColour ) );
+        GraphicalInterface::SetPixel( adjustedXPos, adjustedYPos, static_cast<GraphicalInterface::Colour>( pixelColour ) );
     }
 }
 
