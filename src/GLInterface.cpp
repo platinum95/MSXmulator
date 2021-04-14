@@ -22,6 +22,7 @@ namespace {
 
 constexpr uint32_t RenderSurfaceWidth{ 284u };
 constexpr uint32_t RenderSurfaceHeight{ 243u };
+constexpr float    AspectRatio{ static_cast<float>( RenderSurfaceWidth ) / static_cast<float>( RenderSurfaceHeight ) };
 constexpr uint32_t BytesPerPixel{ 3u };
 constexpr uint32_t FramebufferSize{ RenderSurfaceHeight * RenderSurfaceWidth * BytesPerPixel };
 
@@ -126,12 +127,17 @@ void Initialise( uint16_t width, uint16_t height ) {
     }
 
     glfwMakeContextCurrent( state.window );
+    glfwSetWindowAspectRatio( state.window, RenderSurfaceWidth, RenderSurfaceHeight );
+    glfwSetWindowSizeLimits( state.window, RenderSurfaceWidth, RenderSurfaceHeight, 0, 0 );
+
+    glfwSetWindowSizeCallback( state.window, []( GLFWwindow*, int width, int height ) {
+        glViewport( 0, 0, width, height );
+    } );
 
     auto version = gladLoadGL( glfwGetProcAddress );
     if ( version == 0 ) {
         throw std::runtime_error( "Failed to initialize OpenGL context\n" );
     }
-
 
     glGenVertexArrays( 1, &state.VAO );
     glBindVertexArray( state.VAO );
