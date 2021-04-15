@@ -1875,7 +1875,7 @@ static inline void JP() {
     OperationBase<Operations::JP1, ReadMode>();
 }
 static inline void RETN() {
-    OperationBase<RETN>();
+    OperationBase<Operations::RETN>();
 }
 
 template <uint8_t InterruptMode>

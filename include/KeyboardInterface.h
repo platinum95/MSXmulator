@@ -1,6 +1,7 @@
 #ifndef KEYBOARD_INTERFACE_H
 #define KEYBOARD_INTERFACE_H
 
+#include <optional>
 #include <vector>
 
 namespace KeyboardInterface {
@@ -12,7 +13,7 @@ struct KeyEvent {
     KeyEvent( uint8_t _row, uint8_t bitpos, bool pressed );
 };
 
-std::vector<KeyEvent> GetKeyEvents();
+std::optional<std::vector<KeyEvent>> GetKeyEvents();
 
 }
 

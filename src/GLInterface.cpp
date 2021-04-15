@@ -9,6 +9,7 @@
 #include <array>
 #include <cassert>
 #include <iostream>
+#include <map>
 #include <ranges>
 #include <stdexcept>
 
@@ -92,28 +93,24 @@ struct GLInterfaceState {
 
 } state;
 
-PixelColour GetColourValue( Colour colour ) {
-    switch ( colour ) {
-        case Colour::Transparent:   return { 0_u, 0_u, 0_u };
-        case Colour::Black:         return { 1_u, 1_u, 1_u };
-        case Colour::MediumGreen:   return { 62_u, 184_u, 73_u };
-        case Colour::LightGreen:    return { 116_u, 208_u, 125_u };
-        case Colour::DarkBlue:      return { 89_u, 85_u, 224_u };
-        case Colour::LightBlue:     return { 128_u, 118_u, 241_u };
-        case Colour::DarkRed:       return { 185_u, 94_u, 81_u };
-        case Colour::Cyan:          return { 101_u, 219_u, 239_u };
-        case Colour::MediumRed:     return { 219_u, 101_u, 89_u };
-        case Colour::LightRed:      return { 255_u, 137_u, 125_u };
-        case Colour::DarkYellow:    return { 204_u, 195_u, 94_u };
-        case Colour::LightYellow:   return { 222_u, 208_u, 135_u };
-        case Colour::DarkGreen:     return { 58_u, 162_u, 65_u };
-        case Colour::Magenta:       return { 183_u, 102_u, 181_u };
-        case Colour::Grey:          return { 204_u, 204_u, 204_u };
-        case Colour::White:         return { 255_u, 255_u, 255_u };
-        default: throw std::runtime_error( "Attempting to get invalid colour" );
-    }
-}
-
+std::array<PixelColour, 0x10> ColourMap = {
+    PixelColour{ 0_u, 0_u, 0_u },
+    { 1_u, 1_u, 1_u },
+    { 62_u, 184_u, 73_u },
+    { 116_u, 208_u, 125_u },
+    { 89_u, 85_u, 224_u },
+    { 128_u, 118_u, 241_u },
+    { 185_u, 94_u, 81_u },
+    { 101_u, 219_u, 239_u },
+    { 219_u, 101_u, 89_u },
+    { 255_u, 137_u, 125_u },
+    { 204_u, 195_u, 94_u },
+    { 222_u, 208_u, 135_u },
+    { 58_u, 162_u, 65_u },
+    { 183_u, 102_u, 181_u },
+    { 204_u, 204_u, 204_u },
+    { 255_u, 255_u, 255_u }
+};
 } // namespace
 
 void Initialise( uint16_t width, uint16_t height ) {
@@ -223,8 +220,12 @@ void Cleanup() {
     }
 }
 
-void SetPixel( uint32_t x, uint32_t y, Colour colour ) {
-    const auto colourValue = GetColourValue( colour );
+bool ShouldClose() {
+    return static_cast<bool>( glfwWindowShouldClose( state.window ) );
+}
+
+void SetPixel( uint32_t x, uint32_t y, Colour colour ) noexcept {
+    const auto &colourValue = ColourMap[ static_cast<std::underlying_type_t<Colour>>( colour ) ];
     const size_t pixelOffset = ( ( static_cast<size_t>( y ) * RenderSurfaceWidth ) + x ) * static_cast<size_t>( BytesPerPixel );
 
     // TODO - this could probably be done in a single block
@@ -370,11 +371,11 @@ KeyEvent::KeyEvent( uint8_t _row, uint8_t bitpos, bool pressed )
     assert( bitpos < 8 );
 }
 
-std::vector<KeyEvent> GetKeyEvents() {
+std::optional<std::vector<KeyEvent>> GetKeyEvents() {
     if ( state.events.size() > 0 ) {
-        return std::exchange( state.events, std::vector<KeyEvent>() );
+        return std::optional{ std::exchange( state.events, std::vector<KeyEvent>() ) };
     }
-    return std::vector<KeyEvent>();
+    return std::nullopt;
 }
 
 } // ns::KeyboardInterface

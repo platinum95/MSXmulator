@@ -361,16 +361,19 @@ void PSG::PortAccess( uint8_t port, uint8_t &dataBus, bool writeLine ) {
     switch( port ) {
         case 0x00: {
             assert( writeLine );
+            (void)writeLine;
             RegisterSelectLatch = dataBus;
             break;
         }
         case 0x01: {
             assert( writeLine );
+            (void)writeLine;
             RegisterWrite( dataBus );
             break;
         }
         case 0x02: {
             assert( !writeLine );
+            (void)writeLine;
             assert( RegisterSelectLatch < 16 );
             dataBus = *( (uint8_t*)&portRegisters + RegisterSelectLatch );
             break;

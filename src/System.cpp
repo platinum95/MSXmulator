@@ -2,15 +2,18 @@
 
 #include "AY_3_8910.h"
 #include "Cartridge.h"
+#include "GraphicalInterface.h"
 #include "Input.h"
 #include "TMS9918A.h"
 #include "z80Core.h"
 
 #include <array>
 #include <assert.h>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <thread>
 
 namespace System {
 struct PPI {
@@ -111,24 +114,79 @@ static Cartridge CartB;
 
 void Initialise( std::filesystem::path romPath ){
     std::ifstream input( romPath, std::ios::binary | std::ios::in | std::ios::ate );
-    assert( input.is_open() );
+    if ( !input.is_open() ) {
+        throw std::runtime_error( "Failed to load BIOS" );
+    }
+
     auto size = input.tellg();
     input.seekg( std::ios::beg );
     input.read( (char*)ROM, size );
     input.close();
 
-    CartA.loadCartridge( "nemesis.rom" );
+   // CartA.loadCartridge( "nemesis.rom" );
     VDP::Reset();
     Input::Initialise();
     PSG::Reset();
+}
 
+template<typename T>
+    requires std::chrono::_Is_duration_v<T>
+consteval uint32_t GetStepsPerSyncDuration( const T syncStepDuration ) {
+    constexpr double BaseClockFreqMHz = 10.738635;
+    constexpr double BaseClockFreqGHz = BaseClockFreqMHz / 1000.0;
+    constexpr auto BaseClockPeriod = std::chrono::nanoseconds( static_cast<std::chrono::nanoseconds::rep>( 1.0 / BaseClockFreqGHz ) );
+    return static_cast<uint32_t>( syncStepDuration / BaseClockPeriod );
+}
+
+void Run() {
+    // 10.738635 MHz base clock, /2 for Pixel Clock, /3 for CPU Clock, /24 for GROMCLK, /5 for PSG
+    using namespace std::chrono_literals;
+    constexpr auto SyncStepDuration = 200ms;
+    constexpr auto StepsPerSyncDuration = GetStepsPerSyncDuration( SyncStepDuration );
+
+    while ( !GraphicalInterface::ShouldClose() ) {
+        uint8_t PixelClockDiv = 0;
+        uint8_t CPUClockDiv = 0;
+        uint8_t GROMCLKDiv = 0;
+        uint8_t PSGCLKDiv = 0;
+        const auto syncStartTime = std::chrono::high_resolution_clock::now();
+
+        for ( uint32_t step = 0; step < StepsPerSyncDuration; ++step ) {
+            if ( ++PixelClockDiv == 1 ) {
+                VDP::Tick();
+                PixelClockDiv = 0;
+            }
+            if ( ++CPUClockDiv == 2 ) {
+                Z80::Tick();
+                CPUClockDiv = 0;
+            }
+            if ( ++GROMCLKDiv == 23 ) {
+                GROMCLKDiv = 0;
+            }
+            if ( ++PSGCLKDiv == 4 ) {
+                PSG::Tick();
+                PSGCLKDiv = 0;
+            }
+        }
+
+        const auto syncDuration = std::chrono::high_resolution_clock::now() - syncStartTime;
+        const auto syncDeficit = SyncStepDuration - syncDuration;
+
+        if ( syncDeficit > 20ms ) {
+            std::this_thread::sleep_for( syncDuration );
+        }
+        else if ( syncDeficit > 0ms ){
+            while( std::chrono::high_resolution_clock::now() - syncStartTime < 200ms );
+        }
+
+    }
 }
 
 void IRQ( bool level ) {
     Z80::IRQ( level );
 }
 
-void SlotAccess( uint8_t slot, uint16_t addressBus, uint8_t &dataBus, bool writeLine ) {
+static inline void SlotAccess( uint8_t slot, uint16_t addressBus, uint8_t &dataBus, bool writeLine ) {
     const uint8_t slotSelect = ppi.GetActiveSlotSelect( slot );
     
     switch( slotSelect ){
@@ -141,12 +199,12 @@ void SlotAccess( uint8_t slot, uint16_t addressBus, uint8_t &dataBus, bool write
             }
             else {
                 // Test -> fallback to RAM
-            if ( writeLine ) {
-                RAM[ addressBus ] = dataBus;
-            }
-            else {
-                dataBus = RAM[ addressBus ];
-            }
+                if ( writeLine ) {
+                    RAM[ addressBus ] = dataBus;
+                }
+                else {
+                    dataBus = RAM[ addressBus ];
+                }
 
             }
             break;

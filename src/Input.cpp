@@ -11,7 +11,12 @@ void Input::Initialise() {
 }
 
 void Input::Update() {
-    for ( const auto& keyEvent : KeyboardInterface::GetKeyEvents() ) {
+    const auto keyEvents = KeyboardInterface::GetKeyEvents();
+    if ( !keyEvents.has_value() ) {
+        return;
+    }
+
+    for ( const auto& keyEvent : keyEvents.value() ) {
         if ( keyEvent.keyPressed ) {
             rowValues[ keyEvent.row ] &= ~keyEvent.bitmask;
         }
