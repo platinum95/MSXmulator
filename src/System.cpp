@@ -12,16 +12,65 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <thread>
 
 namespace System {
+
+namespace {
+
+using SlotAccessFn = void(*)(uint16_t, uint8_t&, bool);
+
+uint8_t ROM[ 0x8000 ];
+uint8_t RAM[ 0x10000 ];
+Cartridge CartA;
+Cartridge CartB;
+
+void Slot0Access( uint16_t addressBus, uint8_t& dataBus, bool writeLine ) {
+    if ( writeLine ) [[ unlikely ]] {
+        return;
+    }
+    else if ( addressBus < 0x8000 ) {
+        dataBus = ROM[ addressBus ];
+    }
+    else {
+        // Test -> fallback to RAM
+        if ( writeLine ) {
+            RAM[ addressBus ] = dataBus;
+        }
+        else {
+            dataBus = RAM[ addressBus ];
+        }
+    }
+}
+
+void Slot1Access( uint16_t addressBus, uint8_t& dataBus, bool writeLine ) {
+    // 64kb RAM
+    if ( writeLine ) {
+        RAM[ addressBus ] = dataBus;
+    }
+    else {
+        dataBus = RAM[ addressBus ];
+    }
+}
+
+void Slot2Access( uint16_t addressBus, uint8_t& dataBus, bool writeLine ) {
+    CartA.memoryAccess( addressBus, dataBus, writeLine );
+}
+
+void Slot3Access( uint16_t addressBus, uint8_t& dataBus, bool writeLine ) {
+    CartB.memoryAccess( addressBus, dataBus, writeLine );
+}
+
+const SlotAccessFn SlotAccessFns[ 4 ] = {
+    Slot0Access, Slot1Access, Slot2Access, Slot3Access
+};
+
+}
+
 struct PPI {
     uint8_t RegA{ 0x00 };
-    uint8_t SlotASelect{ 0x00 };
-    uint8_t SlotBSelect{ 0x00 };
-    uint8_t SlotCSelect{ 0x00 };
-    uint8_t SlotDSelect{ 0x00 };
     uint8_t RegC{ 0x00 };
     uint8_t KBScan{ 0x00 };
     bool cassetteControl{ false };
@@ -29,16 +78,18 @@ struct PPI {
     bool capsEnable{ false };
     bool soundEnable{ false };
 
+    SlotAccessFn SlotSelectAccessFns[ 4 ];
+
     inline void PPIAccess( uint8_t port, uint8_t &data, bool writeLine ) {
         switch( port ) {
             case 0x00: {
                 // Reg A - Primary slot-select register
                 if ( writeLine ) {
                     RegA = data;
-                    SlotASelect = data & 0x03;
-                    SlotBSelect = ( data >> 2 ) & 0x03;
-                    SlotCSelect = ( data >> 4 ) & 0x03;
-                    SlotDSelect = ( data >> 6 ) & 0x03;
+                    SlotSelectAccessFns[ 0 ] = SlotAccessFns[ data & 0x03 ];
+                    SlotSelectAccessFns[ 1 ] = SlotAccessFns[ ( data >> 2 ) & 0x03 ];
+                    SlotSelectAccessFns[ 2 ] = SlotAccessFns[ ( data >> 4 ) & 0x03 ];
+                    SlotSelectAccessFns[ 3 ] = SlotAccessFns[ ( data >> 6 ) & 0x03 ];
                 }
                 else {
                     data = RegA;
@@ -85,17 +136,6 @@ struct PPI {
         }
     }
 
-    inline uint8_t GetActiveSlotSelect( uint8_t slot ) {
-        switch( slot ) {
-            case 0x00: return SlotASelect;
-            case 0x01: return SlotBSelect;
-            case 0x02: return SlotCSelect;
-            case 0x03: return SlotDSelect;
-        }
-        assert( false );
-        return 255;
-    }
-
 private:
     void updateRegC() {
         KBScan = RegC & 0x0F;
@@ -106,11 +146,8 @@ private:
     }
 
 };
+
 static PPI ppi;
-static uint8_t ROM[ 0x8000 ];
-static uint8_t RAM[ 0x10000 ];
-static Cartridge CartA;
-static Cartridge CartB;
 
 void Initialise( std::filesystem::path romPath ){
     std::ifstream input( romPath, std::ios::binary | std::ios::in | std::ios::ate );
@@ -127,6 +164,12 @@ void Initialise( std::filesystem::path romPath ){
     VDP::Reset();
     Input::Initialise();
     PSG::Reset();
+
+    ppi.SlotSelectAccessFns[ 0 ] = SlotAccessFns[ 0 ];
+    ppi.SlotSelectAccessFns[ 1 ] = SlotAccessFns[ 1 ];
+    ppi.SlotSelectAccessFns[ 2 ] = SlotAccessFns[ 2 ];
+    ppi.SlotSelectAccessFns[ 3 ] = SlotAccessFns[ 3 ];
+
 }
 
 template<typename T>
@@ -156,7 +199,7 @@ void Run() {
                 VDP::Tick();
                 PixelClockDiv = 0;
             }
-            if ( ++CPUClockDiv == 2 ) {
+            if ( ++CPUClockDiv == 20 ) {
                 Z80::Tick();
                 CPUClockDiv = 0;
             }
@@ -178,7 +221,6 @@ void Run() {
         else if ( syncDeficit > 0ms ){
             while( std::chrono::high_resolution_clock::now() - syncStartTime < 200ms );
         }
-
     }
 }
 
@@ -186,52 +228,8 @@ void IRQ( bool level ) {
     Z80::IRQ( level );
 }
 
-static inline void SlotAccess( uint8_t slot, uint16_t addressBus, uint8_t &dataBus, bool writeLine ) {
-    const uint8_t slotSelect = ppi.GetActiveSlotSelect( slot );
-    
-    switch( slotSelect ){
-        case 0x00: {
-            if ( writeLine ) {
-                return;
-            }
-            else if ( addressBus < 0x8000 ) {
-                dataBus = ROM[ addressBus ];
-            }
-            else {
-                // Test -> fallback to RAM
-                if ( writeLine ) {
-                    RAM[ addressBus ] = dataBus;
-                }
-                else {
-                    dataBus = RAM[ addressBus ];
-                }
-
-            }
-            break;
-        }
-        case 0x01: {
-            // 64kb RAM
-            if ( writeLine ) {
-                RAM[ addressBus ] = dataBus;
-            }
-            else {
-                dataBus = RAM[ addressBus ];
-            }
-            break;
-        }
-        case 0x02: {
-            CartA.memoryAccess( addressBus, dataBus, writeLine );
-            break;
-        }
-        case 0x03: {
-            CartB.memoryAccess( addressBus, dataBus, writeLine );
-            break;
-        }
-    }
-}
-
 void SecondarySlotSelect( uint8_t &dataBus, bool writeLine ) {
-    const uint8_t slotSelect = ppi.GetActiveSlotSelect( 3 );
+    const uint8_t slotSelect = 0;// ppi.GetActiveSlotSelect( 3 );
     
     switch( slotSelect ){
         case 0x00: {
@@ -266,16 +264,16 @@ void MemoryAccess( uint16_t addressBus, uint8_t &dataBus, bool writeLine ) {
     (void) writeLine;
     if ( addressBus < 0x4000 ) {
         // Slot A
-        SlotAccess( 0, addressBus, dataBus, writeLine );
+        ppi.SlotSelectAccessFns[ 0 ]( addressBus, dataBus, writeLine );
     }
     else if ( addressBus < 0x8000 ) {
-        SlotAccess( 1, addressBus, dataBus, writeLine );
+        ppi.SlotSelectAccessFns[ 1 ]( addressBus, dataBus, writeLine );
     }
     else if ( addressBus < 0xC000 ) {
-        SlotAccess( 2, addressBus, dataBus, writeLine );
+        ppi.SlotSelectAccessFns[ 2 ]( addressBus, dataBus, writeLine );
     }
     else if ( addressBus != 0xFFFF ) {
-        SlotAccess( 3, addressBus, dataBus, writeLine );
+        ppi.SlotSelectAccessFns[ 3 ]( addressBus, dataBus, writeLine );
     }
     else {
         SecondarySlotSelect( dataBus, writeLine );
