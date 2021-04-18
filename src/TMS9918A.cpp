@@ -88,15 +88,15 @@ void VDP::Reset() {
     GraphicalInterface::Initialise( H_BLANK_BOUNDARY, V_BLANK_BOUNDARY );
 }
 
-static void IncrementPixelPosition() {
-    if ( ++state.xPos == H_MAX ) {
+static inline void IncrementPixelPosition() {
+    if ( ++state.xPos == H_MAX ) [[ unlikely ]] {
         state.xPos = 0;
         ++state.yPos;
-        if ( state.yPos == V_BLANK_BOUNDARY ) {
+        if ( state.yPos == V_BLANK_BOUNDARY ) [[ unlikely ]] {
             Status |= StatusFlags::Interrupt;
             System::IRQ( false );
         }
-        else if ( state.yPos == V_MAX ) {
+        else if ( state.yPos == V_MAX ) [[ unlikely ]] {
             state.yPos = 0;
             Status &= ~StatusFlags::Interrupt;
             System::IRQ( true );
@@ -120,7 +120,7 @@ void VDP::Tick() {
     IncrementPixelPosition();
     uint8_t pixelColour = portRegisters.R7_ColorCode & 0x0F;
 
-    if ( InActivePortion() ) {
+    if ( InActivePortion() ) [[ likely ]] {
         const uint8_t adjustedYPos = static_cast<uint8_t>( state.yPos - V_BORDER_TOP_BOUNDARY );
         const uint8_t adjustedXPos = static_cast<uint8_t>( state.xPos - H_BORDER_LEFT );
         if ( state.mode == 0x04 ) {
@@ -221,7 +221,7 @@ void VDP::Tick() {
             pixelColour = upperBits ? ( colourData >> 4 ) & 0x0F : colourData & 0x0F;
 
         }
-        else {
+        else [[ unlikely ]] {
             std::cout << "Unhandled graphics mode\n";
         }
 
@@ -229,7 +229,7 @@ void VDP::Tick() {
         for( uint8_t spriteId = 0; spriteId < 32; ++spriteId ) {
             uint8_t *spriteAttributes = &VRAM[ state.spriteAttribTableAddress + ( spriteId * sizeof(uint8_t) * 4 ) ];
             const uint8_t vPos = spriteAttributes[ 0 ];
-            if ( vPos == 208 ) {
+            if ( vPos == 208 ) [[ unlikely ]] {
                 if ( spriteId > 0 ) {
                     //int i = 0;
                 }
