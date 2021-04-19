@@ -19,8 +19,6 @@ static inline void GLFWKeyEventCB( GLFWwindow* window, int key, int action, int,
 
 namespace GraphicalInterface {
 
-using PixelColour = std::tuple<uint8_t, uint8_t, uint8_t>;
-
 inline std::uint8_t operator ""_u( unsigned long long value ) {
     return static_cast<std::uint8_t>( value );
 }
@@ -30,7 +28,7 @@ namespace {
 constexpr uint32_t RenderSurfaceWidth{ 256u };
 constexpr uint32_t RenderSurfaceHeight{ 192u };
 constexpr float    AspectRatio{ static_cast<float>( RenderSurfaceWidth ) / static_cast<float>( RenderSurfaceHeight ) };
-constexpr uint32_t BytesPerPixel{ 3u };
+constexpr uint32_t BytesPerPixel{ 1u };
 constexpr uint32_t FramebufferSize{ RenderSurfaceHeight * RenderSurfaceWidth * BytesPerPixel };
 
 constexpr std::array<float, 2 * 3 * 2> Vertices = {
@@ -51,7 +49,7 @@ constexpr std::array<float, 2 * 3 * 2> TextureCoords = {
     0.0f, 0.0f
 };
 
-const char *VertexShaderSource = R"SHADER(
+const char* VertexShaderSource = R"SHADER(
 #version 330 core
 layout ( location = 0 ) in vec2 vPos;
 layout ( location = 1 ) in vec2 tPosVS;
@@ -64,7 +62,7 @@ void main() {
 }
 )SHADER";
 
-const char *FragmentShaderSource = R"SHADER(
+const char* FragmentShaderSource = R"SHADER(
 #version 330 core
 out vec4 FragColor;
 
@@ -72,45 +70,50 @@ in vec2 tPosFS;
 
 uniform sampler2D frame;
 
+vec4 GetColourFromCode( uint code ) {
+    switch( code ) {
+        case 0u: return vec4( 0.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0, 1.0 );
+        case 1u: return vec4( 1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0, 1.0 );
+        case 2u: return vec4( 62.0 / 255.0, 184.0 / 255.0, 73.0 / 255.0, 1.0 );
+        case 3u: return vec4( 116.0 / 255.0, 208.0 / 255.0, 125.0 / 255.0, 1.0 );
+        case 4u: return vec4( 89.0 / 255.0, 85.0 / 255.0, 224.0 / 255.0, 1.0 );
+        case 5u: return vec4( 128.0 / 255.0, 118.0 / 255.0, 241.0 / 255.0, 1.0 );
+        case 6u: return vec4( 185.0 / 255.0, 94.0 / 255.0, 81.0 / 255.0, 1.0 );
+        case 7u: return vec4( 101.0 / 255.0, 219.0 / 255.0, 239.0 / 255.0, 1.0 );
+        case 8u: return vec4( 219.0 / 255.0, 101.0 / 255.0, 89.0 / 255.0, 1.0 );
+        case 9u: return vec4( 255.0 / 255.0, 137.0 / 255.0, 125.0 / 255.0, 1.0 );
+        case 10u: return vec4( 204.0 / 255.0, 195.0 / 255.0, 94.0 / 255.0, 1.0 );
+        case 11u: return vec4( 222.0 / 255.0, 208.0 / 255.0, 135.0 / 255.0, 1.0 );
+        case 12u: return vec4( 58.0 / 255.0, 162.0 / 255.0, 65.0 / 255.0, 1.0 );
+        case 13u: return vec4( 183.0 / 255.0, 102.0 / 255.0, 181.0 / 255.0, 1.0 );
+        case 14u: return vec4( 204.0 / 255.0, 204.0 / 255.0, 204.0 / 255.0, 1.0 );
+        case 15u: return vec4( 255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0, 1.0 );
+        default: return vec4 ( 0.4, 0.4, 0.4, 1.0 );
+    }
+}
+
 void main() {
-    FragColor = texture( frame, tPosFS );
+    uint colourCode = uint( texture( frame, tPosFS ).r * 255.0 );
+    FragColor = GetColourFromCode( colourCode );
 } 
 )SHADER";
 
 struct GLInterfaceState {
     bool initialised{ false };
 
-    GLFWwindow  *window{ nullptr };
-    GLFWmonitor *monitor{ nullptr };
-    GLFWwindow  *share{ nullptr };
+    GLFWwindow* window{ nullptr };
+    GLFWmonitor* monitor{ nullptr };
+    GLFWwindow* share{ nullptr };
 
     std::array<GLuint, 2>   VBOs;
     GLuint                  VAO;
     GLuint                  shader;
     GLuint                  texture;
 
-    std::array<uint8_t, FramebufferSize> framebuffer{ 0u };
+    uint8_t framebuffer[ FramebufferSize ]{ 0u };
 
 } state;
 
-std::array<PixelColour, 0x10> ColourMap = {
-    PixelColour{ 0_u, 0_u, 0_u },
-    { 1_u, 1_u, 1_u },
-    { 62_u, 184_u, 73_u },
-    { 116_u, 208_u, 125_u },
-    { 89_u, 85_u, 224_u },
-    { 128_u, 118_u, 241_u },
-    { 185_u, 94_u, 81_u },
-    { 101_u, 219_u, 239_u },
-    { 219_u, 101_u, 89_u },
-    { 255_u, 137_u, 125_u },
-    { 204_u, 195_u, 94_u },
-    { 222_u, 208_u, 135_u },
-    { 58_u, 162_u, 65_u },
-    { 183_u, 102_u, 181_u },
-    { 204_u, 204_u, 204_u },
-    { 255_u, 255_u, 255_u }
-};
 } // namespace
 
 void Initialise( uint16_t width, uint16_t height ) {
@@ -160,8 +163,6 @@ void Initialise( uint16_t width, uint16_t height ) {
 
     glGenTextures( 1, &state.texture );
     glBindTexture( GL_TEXTURE_2D, state.texture );
-    glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, RenderSurfaceWidth, RenderSurfaceHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, static_cast<void*>( state.framebuffer.data() ) );
-
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
 
@@ -225,13 +226,8 @@ bool ShouldClose() {
 }
 
 void SetPixel( uint32_t x, uint32_t y, Colour colour ) noexcept {
-    const auto &colourValue = ColourMap[ static_cast<std::underlying_type_t<Colour>>( colour ) ];
     const size_t pixelOffset = ( ( static_cast<size_t>( y ) * RenderSurfaceWidth ) + x ) * static_cast<size_t>( BytesPerPixel );
-
-    // TODO - this could probably be done in a single block
-    state.framebuffer[ pixelOffset + 0 ] = std::get<0>( colourValue );
-    state.framebuffer[ pixelOffset + 1 ] = std::get<1>( colourValue );
-    state.framebuffer[ pixelOffset + 2 ] = std::get<2>( colourValue );
+    state.framebuffer[ pixelOffset ] = static_cast<std::underlying_type_t<Colour>>( colour );
 }
 
 void OutputFrame() {
@@ -241,7 +237,7 @@ void OutputFrame() {
     glUseProgram( state.shader );
     glBindVertexArray( state.VAO );
     glBindTexture( GL_TEXTURE_2D, state.texture );
-    glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, RenderSurfaceWidth, RenderSurfaceHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, static_cast<void*>( state.framebuffer.data() ) );
+    glTexImage2D( GL_TEXTURE_2D, 0, GL_R8, RenderSurfaceWidth, RenderSurfaceHeight, 0, GL_RED, GL_UNSIGNED_BYTE, static_cast<void*>( state.framebuffer ) );
     glDrawArrays( GL_TRIANGLES, 0, 6 );
 
     glfwSwapBuffers( state.window );
