@@ -152,18 +152,18 @@ void Run() {
         const auto syncStartTime = std::chrono::high_resolution_clock::now();
 
         for ( uint32_t step = 0; step < StepsPerSyncDuration; ++step ) {
-            if ( ++PixelClockDiv == 1 ) {
+            if ( ++PixelClockDiv == 2 ) {
                 VDP::Tick();
                 PixelClockDiv = 0;
             }
-            if ( ++CPUClockDiv == 2 ) {
+            if ( ++CPUClockDiv == 3 ) {
                 Z80::Tick();
                 CPUClockDiv = 0;
             }
-            if ( ++GROMCLKDiv == 23 ) {
+            if ( ++GROMCLKDiv == 24 ) {
                 GROMCLKDiv = 0;
             }
-            if ( ++PSGCLKDiv == 4 ) {
+            if ( ++PSGCLKDiv == 5 ) {
                 PSG::Tick();
                 PSGCLKDiv = 0;
             }
