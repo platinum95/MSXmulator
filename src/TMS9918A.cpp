@@ -118,7 +118,7 @@ static inline bool InActivePortion() {
 void VDP::Tick() {
 
     IncrementPixelPosition();
-    uint8_t pixelColour = portRegisters.R7_ColorCode & 0x0F;
+    uint8_t pixelColour{ 0u };
 
     if ( InActivePortion() ) [[ likely ]] {
         const uint8_t adjustedYPos = static_cast<uint8_t>( state.yPos - V_BORDER_TOP_BOUNDARY );
@@ -223,18 +223,7 @@ void VDP::Tick() {
         }
         else [[ unlikely ]] {
             std::cout << "Unhandled graphics mode\n";
-        }
-
-        // Sprites
-        for( uint8_t spriteId = 0; spriteId < 32; ++spriteId ) {
-            uint8_t *spriteAttributes = &VRAM[ state.spriteAttribTableAddress + ( spriteId * sizeof(uint8_t) * 4 ) ];
-            const uint8_t vPos = spriteAttributes[ 0 ];
-            if ( vPos == 208 ) [[ unlikely ]] {
-                if ( spriteId > 0 ) {
-                    //int i = 0;
-                }
-                break;
-            }
+            return;
         }
         GraphicalInterface::SetPixel( adjustedXPos, adjustedYPos, static_cast<GraphicalInterface::Colour>( pixelColour ) );
     }
