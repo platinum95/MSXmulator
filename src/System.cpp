@@ -160,10 +160,10 @@ void Run() {
                 Z80::Tick();
                 CPUClockDiv = 0;
             }
-            if ( ++GROMCLKDiv == 24 ) {
+            if ( ++GROMCLKDiv == 25 ) {
                 GROMCLKDiv = 0;
             }
-            if ( ++PSGCLKDiv == 5 ) {
+            if ( ++PSGCLKDiv == 6 ) {
                 PSG::Tick();
                 PSGCLKDiv = 0;
             }
