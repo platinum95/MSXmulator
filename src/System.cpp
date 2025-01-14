@@ -123,14 +123,14 @@ void Initialise( std::filesystem::path romPath ){
     input.read( (char*)ROM, size );
     input.close();
 
-   // CartA.loadCartridge( "nemesis.rom" );
+    CartA.loadCartridge( "nemesis.rom" );
     VDP::Reset();
     Input::Initialise();
     PSG::Reset();
 }
 
 template<typename T>
-    requires std::chrono::_Is_duration_v<T>
+    requires std::chrono::__is_duration_v<T>
 consteval uint32_t GetStepsPerSyncDuration( const T syncStepDuration ) {
     constexpr double BaseClockFreqMHz = 10.738635;
     constexpr double BaseClockFreqGHz = BaseClockFreqMHz / 1000.0;
@@ -141,31 +141,36 @@ consteval uint32_t GetStepsPerSyncDuration( const T syncStepDuration ) {
 void Run() {
     // 10.738635 MHz base clock, /2 for Pixel Clock, /3 for CPU Clock, /24 for GROMCLK, /5 for PSG
     using namespace std::chrono_literals;
-    constexpr auto SyncStepDuration = 200ms;
+    constexpr auto SyncStepDuration = 10ms;
     constexpr auto StepsPerSyncDuration = GetStepsPerSyncDuration( SyncStepDuration );
 
+    constexpr uint8_t PixelClockDiv = 2;
+    constexpr uint8_t CPUClockDiv = 3;
+    constexpr uint8_t GROMCLKDiv = 24;
+    constexpr uint8_t PSGCLKDiv = 5;
+
     while ( !GraphicalInterface::ShouldClose() ) {
-        uint8_t PixelClockDiv = 0;
-        uint8_t CPUClockDiv = 0;
-        uint8_t GROMCLKDiv = 0;
-        uint8_t PSGCLKDiv = 0;
+        uint8_t PixelClockCounter = PixelClockDiv;
+        uint8_t CPUClockCounter = CPUClockDiv;
+        uint8_t GROMCLKCounter = GROMCLKDiv;
+        uint8_t PSGCLKCounter = PSGCLKDiv;
         const auto syncStartTime = std::chrono::high_resolution_clock::now();
 
         for ( uint32_t step = 0; step < StepsPerSyncDuration; ++step ) {
-            if ( ++PixelClockDiv == 2 ) {
+            if ( --PixelClockCounter == 0 ) {
                 VDP::Tick();
-                PixelClockDiv = 0;
+                PixelClockCounter = PixelClockDiv;
             }
-            if ( ++CPUClockDiv == 3 ) {
+            if ( --CPUClockCounter == 0 ) {
                 Z80::Tick();
-                CPUClockDiv = 0;
+                CPUClockCounter = CPUClockDiv;
             }
-            if ( ++GROMCLKDiv == 25 ) {
-                GROMCLKDiv = 0;
+            if ( --GROMCLKCounter == 0 ) {
+                GROMCLKCounter = GROMCLKDiv;
             }
-            if ( ++PSGCLKDiv == 6 ) {
+            if ( --PSGCLKCounter == 0 ) {
                 PSG::Tick();
-                PSGCLKDiv = 0;
+                PSGCLKCounter = PSGCLKDiv;
             }
         }
 

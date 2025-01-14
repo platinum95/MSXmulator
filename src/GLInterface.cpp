@@ -8,10 +8,12 @@
 
 #include <array>
 #include <cassert>
+#include <cstdint>
 #include <iostream>
 #include <map>
 #include <ranges>
 #include <stdexcept>
+#include <utility>
 
 namespace KeyboardInterface {
 static inline void GLFWKeyEventCB( GLFWwindow* window, int key, int action, int, int );
@@ -136,8 +138,8 @@ void Initialise( uint16_t width, uint16_t height ) {
     glfwSetWindowAspectRatio( state.window, RenderSurfaceWidth, RenderSurfaceHeight );
     glfwSetWindowSizeLimits( state.window, RenderSurfaceWidth, RenderSurfaceHeight, 0, 0 );
 
-    glfwSetWindowSizeCallback( state.window, []( GLFWwindow*, int width, int height ) {
-        glViewport( 0, 0, width, height );
+    glfwSetWindowSizeCallback( state.window, []( GLFWwindow*, int _width, int _height ) {
+        glViewport( 0, 0, _width, _height );
     } );
 
     glfwSetKeyCallback( state.window, KeyboardInterface::GLFWKeyEventCB );

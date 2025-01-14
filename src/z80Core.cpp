@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdint.h>
 #include <sstream>
+#include <utility>
 
 #pragma region Concepts
 
@@ -8173,7 +8174,7 @@ void Z80::Tick() {
     }
 
     if ( debugPrint ) {
-        debugPrintState();
+     //   debugPrintState();
     }
     nextPC = PC;
     operationTick();
