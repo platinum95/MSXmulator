@@ -104,13 +104,15 @@ private:
         capsEnable = RegC & 0x40;
         soundEnable = RegC & 0x80;
     }
-
 };
+
 static PPI ppi;
 static uint8_t ROM[ 0x8000 ];
 static uint8_t RAM[ 0x10000 ];
 static Cartridge CartA;
 static Cartridge CartB;
+
+constexpr double BaseClockFreqMHz = 10.738635;
 
 void Initialise( std::filesystem::path romPath ){
     std::ifstream input( romPath, std::ios::binary | std::ios::in | std::ios::ate );
@@ -129,34 +131,33 @@ void Initialise( std::filesystem::path romPath ){
     PSG::Reset();
 }
 
-template<typename T>
-    requires std::chrono::__is_duration_v<T>
-consteval uint32_t GetStepsPerSyncDuration( const T syncStepDuration ) {
-    constexpr double BaseClockFreqMHz = 10.738635;
+consteval std::chrono::nanoseconds GetDurationForClockCycles( const uint32_t numCycles ) {
     constexpr double BaseClockFreqGHz = BaseClockFreqMHz / 1000.0;
     constexpr auto BaseClockPeriod = std::chrono::nanoseconds( static_cast<std::chrono::nanoseconds::rep>( 1.0 / BaseClockFreqGHz ) );
-    return static_cast<uint32_t>( syncStepDuration / BaseClockPeriod );
+
+    auto duration = numCycles * BaseClockPeriod;
+    return duration;
 }
 
 void Run() {
     // 10.738635 MHz base clock, /2 for Pixel Clock, /3 for CPU Clock, /24 for GROMCLK, /5 for PSG
     using namespace std::chrono_literals;
-    constexpr auto SyncStepDuration = 10ms;
-    constexpr auto StepsPerSyncDuration = GetStepsPerSyncDuration( SyncStepDuration );
+    constexpr auto StepsPerRunSequence = 100;
+    constexpr auto RunSequenceTargetDuration = GetDurationForClockCycles( StepsPerRunSequence );
 
     constexpr uint8_t PixelClockDiv = 2;
     constexpr uint8_t CPUClockDiv = 3;
     constexpr uint8_t GROMCLKDiv = 24;
     constexpr uint8_t PSGCLKDiv = 5;
 
+    uint8_t PixelClockCounter = PixelClockDiv;
+    uint8_t CPUClockCounter = CPUClockDiv;
+    uint8_t GROMCLKCounter = GROMCLKDiv;
+    uint8_t PSGCLKCounter = PSGCLKDiv;
     while ( !GraphicalInterface::ShouldClose() ) {
-        uint8_t PixelClockCounter = PixelClockDiv;
-        uint8_t CPUClockCounter = CPUClockDiv;
-        uint8_t GROMCLKCounter = GROMCLKDiv;
-        uint8_t PSGCLKCounter = PSGCLKDiv;
-        const auto syncStartTime = std::chrono::high_resolution_clock::now();
+        const auto runSequenceStartTime = std::chrono::high_resolution_clock::now();
 
-        for ( uint32_t step = 0; step < StepsPerSyncDuration; ++step ) {
+        for ( uint32_t step = 0; step < StepsPerRunSequence; ++step ) {
             if ( --PixelClockCounter == 0 ) {
                 VDP::Tick();
                 PixelClockCounter = PixelClockDiv;
@@ -174,16 +175,14 @@ void Run() {
             }
         }
 
-        const auto syncDuration = std::chrono::high_resolution_clock::now() - syncStartTime;
-        const auto syncDeficit = SyncStepDuration - syncDuration;
+        const auto runSequenceDuration = std::chrono::high_resolution_clock::now() - runSequenceStartTime;
+        const auto syncDeficit = RunSequenceTargetDuration - runSequenceDuration;
 
         if ( syncDeficit > 20ms ) {
-            std::this_thread::sleep_for( syncDuration );
-        }
-        else if ( syncDeficit > 0ms ){
-            while( std::chrono::high_resolution_clock::now() - syncStartTime < 200ms );
+            std::this_thread::sleep_for( syncDeficit );
         }
 
+        while( std::chrono::high_resolution_clock::now() - runSequenceStartTime < RunSequenceTargetDuration );
     }
 }
 
